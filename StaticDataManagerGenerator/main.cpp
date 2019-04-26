@@ -17,7 +17,7 @@
 #include <set>
 #include <deque>
 
-#define DEBUG 1
+#define DEBUG 2
 #define LINES_TO_IGNORE 11
 
 //using namespace std;
@@ -36,12 +36,20 @@ std::regex enum_usual("\\s*enum\\s+(\\w+)\\s*\\{\\s*");                         
 std::regex elem_enum("\\s*(\\w+)\\s+@\\d+\\s*");                                    // none @0;
 std::regex whiteSpace("\\s*");                                                      //
 
-std::map<std::string, std::string> baseTypes;           // 기본 타입 (int, string) + enum 타입
-std::map<std::string, std::string> definedTypes;        // struct 타입
-//std::map<std::string, std::string> enumTypes;           // enum 타입
+std::map<std::string, std::string> convertName_baseTypes;           // 기본 타입 (int, string)
+/* key - scopeName, value - cppName */
+std::map<std::string, std::string> convertName_enumTypes;           // enum 타입
+//std::map<std::string, std::string> convertName_structTypes;        // struct 타입
 
-std::map<std::string, std::string> keyType;                     // GB.Key가 있는 타입
-std::map<std::string, std::set<std::string>> members;
+/* key - cppName, value - cppName */
+std::map<std::string, std::string> keyNames;                     // GB.Key가 있는 타입
+std::map<std::string, std::set<std::pair<std::string, std::string>>> members;   //pair<capnpName, cppType>
+std::map<std::string, std::set<std::pair<std::string, std::string>>> listTypeMembers;   //pair<capnpName, cppType>
+
+bool isBaseType(std::string name)
+{
+    return convertName_baseTypes.count(name) != 0;
+}
 
 void insertBaseTypes()
 {
@@ -50,62 +58,100 @@ void insertBaseTypes()
 
 std::string getKey(std::deque<std::string>& parents, std::string name = "")
 {
-    auto iter = parents.begin();
-    std::string ret = *iter;
-    iter++;
-    for(; iter != parents.end(); iter++)
-    {
-        ret += '_';
-        ret += *iter;
-    }
     if(name.compare("") != 0)
+        parents.push_back(name);
+    
+    std::string ret;
+    auto iter = parents.begin();
+    if(iter != parents.end())
     {
-        ret += '_';
-        ret += name;
+        ret += *iter;
+        iter++;
+        for(; iter != parents.end(); iter++)
+        {
+            ret += '_';
+            ret += *iter;
+        }
     }
+    
+    if(name.compare("") != 0)
+        parents.pop_back();
     return ret;
+}
+
+void readEnum(std::ifstream& input, std::deque<std::string>& parents, std::string name, int& linenum)
+{
+    
 }
 
 void readStruct(std::ifstream& input, std::deque<std::string>& parents, std::string name, int& linenum)
 {
+    std::string parentDir = getKey(parents);
+    std::string dir = getKey(parents, name);
+    
     parents.push_back(name);
+    
+    if(DEBUG == 2) std::cout << "pDir: " << parentDir << '\n';
+    if(DEBUG == 2) std::cout << "dir: " << dir << '\n';
     
     std::string line;
     while(getline(input, line))
     {
         linenum++;
-        if(linenum <= LINES_TO_IGNORE)
-            continue;
-        
-        
         std::smatch matches;
         
-        if(std::regex_search(line, matches, whiteSpace) ||
-           std::regex_search(line, matches, comment))
+        if(std::regex_match(line, matches, whiteSpace) ||
+           std::regex_match(line, matches, comment))
         {
             continue;
         }
-        else if(std::regex_search(line, matches, elem_key))
+        else if(std::regex_match(line, matches, struct_usual))
         {
-            
+            readStruct(input, parents, matches[1].str(), linenum);
+            if(DEBUG == 2) std::cout << "struct_usual" << '\n';
+        }
+        else if(std::regex_match(line, matches, elem_key))
+        {
+            std::string keyType = matches[2].str();
+            if(isBaseType(keyType))
+            {
+                keyNames[dir] = convertName_baseTypes[keyType];
+            }
+            else
+            {
+                if(convertName_enumTypes.count(parentDir + '_' + keyType) != 0)
+                {
+                    keyNames[dir] = convertName_enumTypes[parentDir + '_' + keyType];
+                }
+                else if(convertName_enumTypes.count(dir + '_' + keyType) != 0)
+                {
+                    keyNames[dir] = convertName_enumTypes[dir + '_' + keyType];
+                }
+                else
+                {
+                    std::cout << "ERROR: Unknown type '" << keyType << "' found at line " << linenum << ".\n";
+                }
+            }
             
             if(DEBUG == 2) std::cout << "elem_key" << '\n';
         }
-        else if(std::regex_search(line, matches, elem))
+        else if(std::regex_match(line, matches, elem))
         {
             if(DEBUG == 2) std::cout << "elem" << '\n';
         }
-        else if(std::regex_search(line, matches, elem_list))
+        else if(std::regex_match(line, matches, elem_list))
         {
             if(DEBUG == 2) std::cout << "elem_list" << '\n';
         }
-        else if(std::regex_search(line, matches, closingBrace)) //struct
-        {
-            if(DEBUG == 2) std::cout << "closingBrace" << '\n';
-        }
-        else if(std::regex_search(line, matches, serverOnly)) //struct
+        else if(std::regex_match(line, matches, serverOnly))
         {
             if(DEBUG == 2) std::cout << "serverOnly" << '\n';
+        }
+        else if(std::regex_match(line, matches, closingBrace))
+        {
+            if(DEBUG == 2) std::cout << "closingBrace" << '\n';
+            parents.pop_back();
+            return;
         }
         else
         {
@@ -116,6 +162,7 @@ void readStruct(std::ifstream& input, std::deque<std::string>& parents, std::str
     }
     
     parents.pop_back();
+    return;
 }
 
 int main(int argc, const char * argv[])
@@ -148,11 +195,11 @@ int main(int argc, const char * argv[])
             continue;
         
         std::smatch matches;
-        if(std::regex_search(line, matches, comment)) //주석
+        if(std::regex_match(line, matches, comment)) //주석
         {
             continue;
         }
-        else if(std::regex_search(line, matches, import)) //import
+        else if(std::regex_match(line, matches, import)) //import
         {
             if(DEBUG == 2)
             {
@@ -162,7 +209,7 @@ int main(int argc, const char * argv[])
                 }
             }
         }
-        else if(std::regex_search(line, matches, import2)) //import2
+        else if(std::regex_match(line, matches, import2)) //import2
         {
             if(DEBUG == 2)
             {
@@ -172,7 +219,7 @@ int main(int argc, const char * argv[])
                 }
             }
         }
-        else if(std::regex_search(line, matches, struct_root)) //struct_root
+        else if(std::regex_match(line, matches, struct_root)) //struct_root
         {
             if(DEBUG == 2)
             {
@@ -184,7 +231,7 @@ int main(int argc, const char * argv[])
             std::deque<std::string> parents = std::deque<std::string>();
             readStruct(input, parents, matches[1].str(), linenum);
         }
-        else if(std::regex_search(line, matches, struct_usual)) //struct
+        else if(std::regex_match(line, matches, struct_usual)) //struct
         {
             if(DEBUG == 2)
             {
