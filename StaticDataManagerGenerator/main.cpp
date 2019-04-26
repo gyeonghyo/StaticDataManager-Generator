@@ -22,26 +22,50 @@
 
 //using namespace std;
 
-std::regex comment("\\s*#.*");                                                  // # 시즌 종료 후 정산하는데 쓸 여유 시간
-std::regex import("\\s*using\\s+(\\w+)\\s*=\\s*import\\s+([\"./\\w]+);\\s*");   // using Action = import "achievements.capnp".Action;
-std::regex import2("\\s*using\\s+import\\s+([\"./\\w]+);\\s*");                 // using import "events.capnp".MessageReward;
-std::regex struct_root("\\s*struct\\s+(\\w+)\\s+\\$Data.root\\s*\\{\\s*");      // struct MysteryMazeMode $Data.root {
-std::regex struct_usual("\\s*struct\\s+(\\w+)\\s*\\{\\s*");                     // struct Season {
-std::regex elem_key("\\s*(\\w+)\\s+@\\d+\\s*:\\s*(\\w+)\\s+\\$GB.key;\\s*");    // id                       @0 :Int16 $GB.key;
-std::regex elem("\\s*(\\w+)\\s+@\\d+\\s*:\\s*(\\w+);\\s*");                     // startTime                @1 :Int64;
-std::regex elem_list("\\s*(\\w+)\\s+@\\d+\\s*:\\s*List\\((\\w+)\\);\\s*");      // mazeTables               @2 :List(MazeTable);
-std::regex serverOnly(".*\\$Data.serverOnly;\\s*");                             // itemHardLimits           @3 :List(ItemData) $Data.serverOnly;
-std::regex closingBrace("\\s*\\}\\s*");                                         // }
+std::regex comment("\\s*#.*");                                                      // # 시즌 종료 후 정산하는데 쓸 여유 시간
+std::regex import("\\s*using\\s+(\\w+)\\s*=\\s*import\\s+([\"./\\w]+)\\s*;\\s*");   // using Action = import "achievements.capnp".Action;
+std::regex import2("\\s*using\\s+import\\s+([\"./\\w]+);\\s*");                     // using import "events.capnp".MessageReward;
+std::regex struct_root("\\s*struct\\s+(\\w+)\\s+\\$Data.root\\s*\\{\\s*");          // struct MysteryMazeMode $Data.root {
+std::regex struct_usual("\\s*struct\\s+(\\w+)\\s*\\{\\s*");                         // struct Season {
+std::regex elem_key("\\s*(\\w+)\\s+@\\d+\\s*:\\s*(\\w+)\\s+\\$GB.key\\s*;\\s*");    // id                       @0 :Int16 $GB.key;
+std::regex elem("\\s*(\\w+)\\s+@\\d+\\s*:\\s*(\\w+);\\s*");                         // startTime                @1 :Int64;
+std::regex elem_list("\\s*(\\w+)\\s+@\\d+\\s*:\\s*List\\((\\w+)\\)\\s*;\\s*");      // mazeTables               @2 :List(MazeTable);
+std::regex serverOnly(".*\\$Data.serverOnly;\\s*");                                 // itemHardLimits           @3 :List(ItemData) $Data.serverOnly;
+std::regex closingBrace("\\s*\\}\\s*");                                             // }
+std::regex enum_usual("\\s*enum\\s+(\\w+)\\s*\\{\\s*");                             // enum Source {
+std::regex elem_enum("\\s*(\\w+)\\s+@\\d+\\s*");                                    // none @0;
+std::regex whiteSpace("\\s*");                                                      //
 
-std::map<std::string, std::string> baseTypes;       // 기본 타입 (int, string)
-std::map<std::string, std::string> definedTypes;    // 특수 처리가 필요한 타입
-std::map<std::string, std::string> enumTypes;       // enum 타입
-std::set<std::string> typesWithKey;                 // GB.Key가 있는 타입
+std::map<std::string, std::string> baseTypes;           // 기본 타입 (int, string) + enum 타입
+std::map<std::string, std::string> definedTypes;        // struct 타입
+//std::map<std::string, std::string> enumTypes;           // enum 타입
 
-void insertBaseType()
+std::map<std::string, std::string> keyType;                     // GB.Key가 있는 타입
+std::map<std::string, std::set<std::string>> members;
+
+void insertBaseTypes()
 {
     
 }
+
+std::string getKey(std::deque<std::string>& parents, std::string name = "")
+{
+    auto iter = parents.begin();
+    std::string ret = *iter;
+    iter++;
+    for(; iter != parents.end(); iter++)
+    {
+        ret += '_';
+        ret += *iter;
+    }
+    if(name.compare("") != 0)
+    {
+        ret += '_';
+        ret += name;
+    }
+    return ret;
+}
+
 void readStruct(std::ifstream& input, std::deque<std::string>& parents, std::string name, int& linenum)
 {
     parents.push_back(name);
@@ -53,55 +77,35 @@ void readStruct(std::ifstream& input, std::deque<std::string>& parents, std::str
         if(linenum <= LINES_TO_IGNORE)
             continue;
         
-        if(line.compare("") == 0)
-            continue;
         
         std::smatch matches;
-        if(std::regex_search(line, matches, comment)) //주석
+        
+        if(std::regex_search(line, matches, whiteSpace) ||
+           std::regex_search(line, matches, comment))
         {
             continue;
         }
-        else if(std::regex_search(line, matches, struct_usual)) //struct_usual
+        else if(std::regex_search(line, matches, elem_key))
         {
             
             
-            if(DEBUG == 2)
-            {
-                std::cout << 1 << '\n';
-                for (size_t i = 0; i < matches.size(); ++i) {
-                    std::cout << i << ": '" << matches[i].str() << "'\n";
-                }
-            }
+            if(DEBUG == 2) std::cout << "elem_key" << '\n';
         }
-        else if(std::regex_search(line, matches, import2)) //import2
+        else if(std::regex_search(line, matches, elem))
         {
-            if(DEBUG == 2)
-            {
-                std::cout << 2 << '\n';
-                for (size_t i = 0; i < matches.size(); ++i) {
-                    std::cout << i << ": '" << matches[i].str() << "'\n";
-                }
-            }
+            if(DEBUG == 2) std::cout << "elem" << '\n';
         }
-        else if(std::regex_search(line, matches, struct_root)) //struct_root
+        else if(std::regex_search(line, matches, elem_list))
         {
-            if(DEBUG == 2)
-            {
-                std::cout << "struct_root" << '\n';
-                for (size_t i = 0; i < matches.size(); ++i) {
-                    std::cout << i << ": '" << matches[i].str() << "'\n";
-                }
-            }
+            if(DEBUG == 2) std::cout << "elem_list" << '\n';
         }
-        else if(std::regex_search(line, matches, struct_usual)) //struct
+        else if(std::regex_search(line, matches, closingBrace)) //struct
         {
-            if(DEBUG == 2)
-            {
-                std::cout << "struct" << '\n';
-                for (size_t i = 0; i < matches.size(); ++i) {
-                    std::cout << i << ": '" << matches[i].str() << "'\n";
-                }
-            }
+            if(DEBUG == 2) std::cout << "closingBrace" << '\n';
+        }
+        else if(std::regex_search(line, matches, serverOnly)) //struct
+        {
+            if(DEBUG == 2) std::cout << "serverOnly" << '\n';
         }
         else
         {
