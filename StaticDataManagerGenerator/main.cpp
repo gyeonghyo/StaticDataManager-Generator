@@ -116,7 +116,7 @@ void readEnum(std::ifstream& input, std::deque<std::string>& parents, std::strin
     //실행 목적: enum의 위치와 cpp 이름을 파악하기 위해
     convertName_enumTypes[dir] = getCppNameSpace(parents);
     
-    if(MY_DEBUG >= 2) std::cout << "enum ns: " << getCppNameSpace(parents) << '\n';
+    if(MY_DEBUG == 2) std::cout << "enum ns: " << getCppNameSpace(parents) << '\n';
     
     std::string line;
     while(getline(input, line))
@@ -375,10 +375,15 @@ int main(int argc, const char * argv[])
         {
             continue;
         }
-        else if(std::regex_match(line, matches, import)) //import
+        else if(std::regex_match(line, matches, import) ||
+                std::regex_match(line, matches, import2)) //import
         {
             std::string myName = matches[1].str();
-            std::string toImport = matches[2].str();
+            std::string toImport;
+            if(std::regex_match(line, import))
+                toImport = matches[2].str();
+            else
+                toImport = matches[1].str();
             
             std::regex hasDot("([\"./\\w]+)\\.(\\w+)");
             std::smatch matches_dot;
@@ -389,6 +394,8 @@ int main(int argc, const char * argv[])
                 has_Dot = true;
                 toImport = matches_dot[1].str();
                 nestedType = matches_dot[2].str();
+                if(std::regex_match(line, import2))
+                    myName = nestedType;
             }
             
             std::regex clean("\"([./\\w]+)\\.capnp\"");
@@ -410,6 +417,8 @@ int main(int argc, const char * argv[])
             std::string token;
             while(ss >> token)
                 array.push_back(token);
+            if(array.size() > 0)
+                array.pop_back();
             
             if(has_Dot)
                 array.push_back(nestedType);
@@ -423,7 +432,7 @@ int main(int argc, const char * argv[])
             else
                 p++;
             
-            for(; p < array.size() - 1; p++)
+            for(; p < array.size(); p++)
             {
                 cppType += "::" + array[p];
             }
@@ -432,16 +441,6 @@ int main(int argc, const char * argv[])
             
             if(MY_DEBUG == 3)
                 std::cout << "myName: " << myName << " cppType: " << cppType << '\n';
-        }
-        else if(std::regex_match(line, matches, import2)) //import2
-        {
-            if(MY_DEBUG == 2)
-            {
-                std::cout << 2 << '\n';
-                for (size_t i = 0; i < matches.size(); ++i) {
-                    std::cout << i << ": '" << matches[i].str() << "'\n";
-                }
-            }
         }
         else if(std::regex_match(line, matches, struct_root) ||
                 std::regex_match(line, matches, struct_usual)) //struct_root
@@ -485,13 +484,6 @@ int main(int argc, const char * argv[])
         else if(std::regex_match(line, matches, struct_root) ||
                 std::regex_match(line, matches, struct_usual)) //struct_root
         {
-            if(MY_DEBUG == 2)
-            {
-                std::cout << "struct_root" << '\n';
-                for (size_t i = 0; i < matches.size(); ++i) {
-                    std::cout << i << ": '" << matches[i].str() << "'\n";
-                }
-            }
             std::deque<std::string> parents = std::deque<std::string>();
             readElem(input, parents, matches[1].str(), linenum);
         }
