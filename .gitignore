@@ -1,4 +1,4 @@
-*.contents.xcworkspacedata
+*.xcworkspacedata
 *.plist
-*.xscheme
+*.xcscheme
 *.xcuserstate
