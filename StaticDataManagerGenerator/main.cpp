@@ -11,15 +11,20 @@
 #include <iostream>
 #include <regex>
 #include <string>
-#include <unistd.h>
+//#include <unistd.h>
 #include <vector>
 #include <map>
 #include <set>
 #include <deque>
-#include <sstream>
 
-#define MY_DEBUG 3
+#include <sstream>
+#include <iomanip>
+#include <ctime>
+#include <ctype.h>
+
+#define MY_DEBUG 4
 #define LINES_TO_IGNORE 11
+#define TAB (std::string)"    "
 
 //using namespace std;
 
@@ -54,13 +59,45 @@ std::map<std::string, std::string> keyNames;                        // GB.Key
 std::map<std::string, std::deque<std::pair<std::string, std::string>>> members;   //pair<capnpName, cppType>
 std::map<std::string, std::deque<std::pair<std::string, std::string>>> listTypeMembers;   //pair<capnpName, cppType>
 
+/* elem - cppType*/
+std::set<std::string> baseTypes;
+
 std::string rootName;
 
+//util
+std::string low(std::string orig);
+std::string up(std::string orig);
+std::string replaceAll(std::string str, const std::string& from, const std::string& to);
+
+//capnp baseType 인가?
 bool isBaseType(std::string typeName)
 {
     return convertName_baseTypes.count(typeName) != 0;
 }
 
+//cpp baseType 인가?
+bool isCppBaseType(std::string cppTypeName)
+{
+	return baseTypes.count(cppTypeName) != 0;
+}
+
+//cpp structType 인가?
+bool isCppStructType(std::string cppTypeName)
+{
+	return existing_structTypes.count(cppTypeName) != 0;
+}
+
+//import 된 것인가?
+bool isImportedType(std::string cppType)
+{
+	return existing_importedTypes.count(cppType) != 0;
+}
+
+//key 가 있는가?
+bool hasKey(std::string cppTypeName)
+{
+	return keyNames.count(cppTypeName) != 0;
+}
 
 void insertBaseTypes()
 {
@@ -71,6 +108,10 @@ void insertBaseTypes()
     convertName_baseTypes["Int32"] = "int32_t";
     convertName_baseTypes["Int16"] = "int16_t";
     convertName_baseTypes["Int8"] = "int8_t";
+	for (const auto& pa : convertName_baseTypes)
+	{
+		baseTypes.insert(pa.second);
+	}
 }
 
 std::string getKey(std::deque<std::string>& parents, std::string name = "")
@@ -105,6 +146,14 @@ std::string getCppNameSpace(std::deque<std::string>& parents)
         ret += st;
     }
     return ret;
+}
+
+//capnp reader 의 타입 반환
+std::string getReader(std::string cppType)
+{
+	auto ret = replaceAll(cppType, "_", "::");
+	ret = "gb::capnp::gamedata::" + ret + "::Reader";
+	return ret;
 }
 
 //단순히 enum을 convertName_enumTypes 에 저장
@@ -214,6 +263,8 @@ void readElem(std::ifstream& input, std::deque<std::string>& parents, std::strin
                     if(has_Dot)
                         cppKeyType += "::" + nestedType;
                     
+					existing_importedTypes.insert(cppKeyType);
+
                     if(MY_DEBUG == 3)
                         std::cout << "line: " << linenum << " cppType: " << cppKeyType << '\n';
                 }
@@ -342,6 +393,196 @@ void readStruct(std::ifstream& input, std::deque<std::string>& parents, std::str
     return;
 }
 
+//헤더 파일 작성
+void writeHeader()
+{
+	auto t = std::time(nullptr);
+	auto tm = *std::localtime(&t);
+
+	std::ofstream h("gb" + rootName + "StaticDataManager.h");
+	//std::ostream& h = std::cout;
+
+	//주석 정보
+
+	h << "//\n";
+	h << "//  gb" + rootName + "StaticDataManager.h\n";
+	h << "//  gbGame\n";
+	h << "//\n";
+	h << "//  Created by StaticDataManagerGenerator on " << std::put_time(&tm, "%Y. %m. %d") << "\n";
+	h << "//\n\n";
+
+	h << "#ifndef gb" + rootName + "StaticDataManager_h\n";
+	h << "#define gb" + rootName + "StaticDataManager_h\n\n";
+
+	h << "#include \"gbStaticDataManager.h\"\n";
+	h << "#include \"capnp/gamedata/" + low(rootName) + ".capnp.h\n\n";
+
+	h << "#define " + rootName + "StaticDataManagerInstance gb::gamedata::" + rootName + "::getInstance()\n\n";
+
+	//import들 전방 선언
+	for (auto className : existing_importedTypes)
+	{
+		h << "class " + className + ";\n";
+	}
+	h << "\n";
+
+	h << "NS_GB_GAMEDATA_BEGIN\n\n";
+
+	//struct들 전방 선언
+	for(auto className : existing_structTypes)
+	{
+		h << "class " + className + ";\n";
+	}
+	h << "\n";
+
+	for (auto className : existing_structTypes)
+	{
+		if(className.compare(rootName) != 0)
+			h << "class " + className + "\n";
+		else
+			h << "class " + className + " : public StaticDataManager<" + rootName + ">\n";
+		h << "{\n";
+
+		// public -> constructor 생성
+		h << "public:\n";
+		if (className.compare(rootName) != 0)
+		{
+			h << TAB + className + "(" + getReader(className) + " capnpReader);\n";
+		}
+		else
+		{
+			h << TAB + rootName + "();\n";
+			h << TAB + "~" + rootName + "();\n";
+		}
+
+		// getter 생성
+		for (const auto& memberVar : members[className])
+		{
+			if (!isCppStructType(memberVar.second))
+			{
+				// int64_t getStartTime() const { return _startTime; }
+				h << TAB + memberVar.second + " get" + up(memberVar.first) + "() const { return _" + memberVar.first + "; }\n";
+			}
+			else
+			{
+				// const Row* getRowForOrder(const int16_t order) const;
+				h << TAB + "const " + memberVar.second + "* get" + up(memberVar.first) +
+					"() const { return _" + memberVar.first + ".get(); }\n";
+			}
+		}
+		h << "\n";
+		for (const auto& memberVar : listTypeMembers[className])
+		{
+			auto name = memberVar.first;
+			auto type = memberVar.second;
+			if (!hasKey(memberVar.second))
+			{
+				// const std::vector<MysteryMazeFollowerMapInfo>& getFollowerMapInfos() const { return _followerMapInfos; }
+				h << TAB + "const std::vector<" + type + ">& get" + up(name) + "() const { return _" +
+					name + "; }\n";
+			}
+			else
+			{
+				//
+				std::string keyType = keyNames[type];
+				h << TAB + "const std::map<" + keyType + ", " + type + ">& getAll" + up(name) +
+					"() const { return _" + name + "; }\n";
+				if (!isCppBaseType(type))
+				{
+					//const MysteryMazeSeason* getMysteryMazeSeason(const int16_t id) const;
+					//{
+					//	auto it = _seasons.find(id);
+					//	return it != _seasons.end() ? &it->second : nullptr;
+					//}
+					h << TAB + "const " + type + "* get" + up(name) + "(const " + keyType + " id) const\n" +
+						TAB + "{\n" + 
+						TAB + TAB + "auto it = _" + name + ".find(id);\n" +
+						TAB + TAB + "return it != _" + name + ".end() ? & it->second : nullptr;\n" +
+						TAB + "}\n";
+				}
+				else
+				{
+					h << TAB + type + " get" + up(name) + "(const " + keyType + " id) const\n" +
+						TAB + "{\n" +
+						TAB + TAB + "auto it = _" + name + ".find(id);\n" +
+						TAB + TAB + "return it != _" + name + ".end() ? & it->second : nullptr;\n" +
+						TAB + "}\n";
+				}
+			}
+		}
+
+		// protected -> load/unload 함수
+		if (className.compare(rootName) == 0)
+		{
+			h << "protected:\n";
+			h << TAB + "void loadStaticData() override;\n";
+			h << TAB + "void unloadStaticData() override;\n\n";
+		} 
+
+		h << "private:\n";
+		// 비 list 타입 멤버 변수
+		for (const auto& memberVar : members[className])
+		{
+			if (isImportedType(memberVar.second))
+			{
+				h << "CHECK IMPORTED TYPE <<" << memberVar.second << ">>\n";
+			}
+
+			if(!isCppStructType(memberVar.second))
+				h << TAB + memberVar.second + " _" + memberVar.first + ";\n";
+			else
+				h << TAB + "std::unique_ptr<" + memberVar.second + "> _" + memberVar.first + ";\n";
+		}
+		// list 타입 멤버 변수
+		for (const auto& memberVar : listTypeMembers[className])
+		{
+			if (isImportedType(memberVar.second))
+			{
+				h << "PLEASE CHECK IMPORTED TYPE ##" << memberVar.second << "##\n";
+			}
+
+			if (!hasKey(memberVar.second))
+				h << TAB + "std::vector<" + memberVar.second + "> _" + memberVar.first + ";\n";
+			else
+			{
+				std::string keyType = keyNames[memberVar.second];
+				h << TAB + "std::map<" + keyType + ", " + memberVar.second + "> _" + memberVar.first + ";\n";
+			}
+		}
+		h << "};\n\n";
+	}
+
+	h << "NS_GB_GAMEDATA_END\n\n";
+
+	h << "#endif\n";
+}
+
+void writeCpp()
+{
+	auto t = std::time(nullptr);
+	auto tm = *std::localtime(&t);
+
+	//std::ofstream h("gb" + rootName + "StaticDataManager.cpp");
+	std::ostream& h = std::cout;
+
+	//주석 정보
+
+	h << "//\n";
+	h << "//  gb" + rootName + "StaticDataManager.cpp\n";
+	h << "//  gbGame\n";
+	h << "//\n";
+	h << "//  Created by StaticDataManagerGenerator on " << std::put_time(&tm, "%Y. %m. %d") << "\n";
+	h << "//\n\n";
+
+	h << "#include gb" + rootName + "StaticDataManager.h\n\n";
+
+	h << "NS_GB_GAMEDATA_BEGIN\n\n";
+
+
+
+
+}
+
 int main(int argc, const char * argv[])
 {
     insertBaseTypes();
@@ -355,8 +596,8 @@ int main(int argc, const char * argv[])
     
     if(MY_DEBUG)
     {
-        char path[1024];
-        getcwd(path, sizeof(path));
+        char path[1024] = "unavailable";
+        //getcwd(path, sizeof(path));
         std::cout << "Current path is " << path << '\n';
         std::cout << "File name: " << argv[1] << std::endl;
     }
@@ -392,8 +633,8 @@ int main(int argc, const char * argv[])
             if(std::regex_match(toImport, matches_dot, hasDot))
             {
                 has_Dot = true;
-                toImport = matches_dot[1].str();
                 nestedType = matches_dot[2].str();
+				toImport = matches_dot[1].str();
                 if(std::regex_match(line, import2))
                     myName = nestedType;
             }
@@ -499,6 +740,33 @@ int main(int argc, const char * argv[])
             return 0;
         }
     }
+
+	writeHeader();
+
+	writeCpp();
+
     return 0;
 }
 
+std::string low(std::string orig)
+{
+	std::string ret = orig;
+	ret[0] = tolower(ret[0]);
+	return ret;
+}
+
+std::string up(std::string orig)
+{
+	std::string ret = orig;
+	ret[0] = toupper(ret[0]);
+	return ret;
+}
+
+std::string replaceAll(std::string str, const std::string& from, const std::string& to) {
+	size_t start_pos = 0;
+	while ((start_pos = str.find(from, start_pos)) != std::string::npos) {
+		str.replace(start_pos, from.length(), to);
+		start_pos += to.length(); // Handles case where 'to' is a substring of 'from'
+	}
+	return str;
+}
