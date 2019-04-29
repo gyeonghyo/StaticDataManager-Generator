@@ -256,8 +256,21 @@ void readElem(std::ifstream& input, std::deque<std::string>& parents, std::strin
                     nestedType = matches_dot[2].str();
                 }
                 
+                /*
                 std::string siblingLocation = parentDir.compare("") != 0 ? parentDir + '_' + keyType : keyType;
                 std::string childLocation = dir.compare("") != 0 ? dir + '_' + keyType : keyType;
+                */
+                 
+                std::deque<std::string> tmpParents;
+                std::deque<std::string> scopes;
+                for (auto st : parents)
+                {
+                    std::string k = getKey(tmpParents);
+                    scopes.push_front(k.compare("") != 0 ? k + '_' + keyType : keyType);
+                    tmpParents.push_back(st);
+                }
+                std::string k = getKey(tmpParents);
+                scopes.push_front(k.compare("") != 0 ? k + '_' + keyType : keyType);
                 
                 //import는 절대위치만 확인, enum 이나 struct 면 스코프를 확인 후 변환
                 if(convertName_importedTypes.count(keyType) != 0)
@@ -271,33 +284,34 @@ void readElem(std::ifstream& input, std::deque<std::string>& parents, std::strin
                     if(MY_DEBUG == 3)
                         std::cout << "line: " << linenum << " cppType: " << cppKeyType << '\n';
                 }
-                else if(convertName_enumTypes.count(childLocation) != 0)
-                {
-                    cppKeyType = convertName_enumTypes[childLocation];
-                    if(has_Dot)
-                        cppKeyType += "::" + nestedType;
-                }
-                else if(convertName_enumTypes.count(siblingLocation) != 0)
-                {
-                    cppKeyType = convertName_enumTypes[siblingLocation];
-                    if(has_Dot)
-                        cppKeyType += "::" + nestedType;
-                }
-                else if(existing_structTypes.count(childLocation) != 0)
-                {
-                    cppKeyType = childLocation;
-                    if(has_Dot)
-                        cppKeyType += '_' + nestedType;
-                }
-                else if(existing_structTypes.count(siblingLocation) != 0)
-                {
-                    cppKeyType = siblingLocation;
-                    if(has_Dot)
-                        cppKeyType += '_' + nestedType;
-                }
                 else
                 {
-                    std::cout << "ERROR: Unknown type '" << keyType << "' at line " << linenum << ".\n";
+                    //자신의 자식이나, 자신의 조상의 자식에 대해서만 scope를 제한 후 Type를 검색
+                    bool found = false;
+                    for(const auto & scopeName : scopes)
+                    {
+                        //std::cout << scopeName << '\n';
+                        if(convertName_enumTypes.count(scopeName) != 0)
+                        {
+                            cppKeyType = convertName_enumTypes[scopeName];
+                            if(has_Dot)
+                                cppKeyType += "::" + nestedType;
+                            found = true;
+                            break;
+                        }
+                        else if(existing_structTypes.count(scopeName) != 0)
+                        {
+                            cppKeyType = scopeName;
+                            if(has_Dot)
+                                cppKeyType += '_' + nestedType;
+                            found = true;
+                            break;
+                        }
+                    }
+                    if(!found)
+                    {
+                        std::cout << "ERROR: Unknown type '" << keyType << "' at line " << linenum << ".\n";
+                    }
                 }
             }
             
