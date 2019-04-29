@@ -25,6 +25,7 @@
 #define MY_DEBUG 4
 #define LINES_TO_IGNORE 11
 #define TAB (std::string)"    "
+#define WARNING (std::string)"PLEASE CHECK IMPORTED TYPE"
 
 //using namespace std;
 
@@ -425,7 +426,7 @@ void writeHeader()
 	h << "#define " + rootName + "StaticDataManagerInstance gb::gamedata::" + rootName + "::getInstance()\n\n";
 
 	//import들 전방 선언
-    h << "PLEASE CHECK IMPORTED TYPES\n";
+    h << WARNING + "\n";
 	for (const auto& className : existing_importedTypes)
 	{
 		h << "class " + className + ";\n";
@@ -529,10 +530,10 @@ void writeHeader()
 		// 비 list 타입 멤버 변수
 		for (const auto& memberVar : members[className])
 		{
-			if (isImportedType(memberVar.second))
-			{
-				h << "CHECK IMPORTED TYPE <<" << memberVar.second << ">>\n";
-			}
+            if (isImportedType(memberVar.second))
+            {
+                h << WARNING + " ##" << memberVar.second << "##\n";
+            }
 
 			if(!isCppStructType(memberVar.second))
 				h << TAB + memberVar.second + " _" + memberVar.first + ";\n";
@@ -544,7 +545,7 @@ void writeHeader()
 		{
 			if (isImportedType(memberVar.second))
 			{
-				h << "PLEASE CHECK IMPORTED TYPE ##" << memberVar.second << "##\n";
+				h << WARNING + " ##" << memberVar.second << "##\n";
 			}
 
 			if (!hasKey(memberVar.second))
@@ -585,12 +586,12 @@ void writeCpp()
 
 	h << "NS_GB_GAMEDATA_BEGIN\n\n";
 
-    h << rootName + "::" + rootName + "()";
+    h << rootName + "::" + rootName + "()\n";
     h << "{\n";
     h << TAB + "loadStaticData();\n";
     h << "}\n\n";
     
-    h << rootName + "::~" + rootName + "()";
+    h << rootName + "::~" + rootName + "()\n";
     h << "{\n";
     h << TAB + "unloadStaticData();\n";
     h << "}\n\n";
@@ -603,6 +604,11 @@ void writeCpp()
     {
         auto name = memberVar.first;
         auto type = memberVar.second;
+        if (isImportedType(type))
+        {
+            h << WARNING + " ##" << memberVar.second << "##\n";
+        }
+        
         if(!isCppStructType(type))
             h << TAB + " _" + name + " = capnpReader.get" + up(name) + "();\n";
         else
@@ -616,6 +622,11 @@ void writeCpp()
     {
         auto name = memberVar.first;
         auto type = memberVar.second;
+        if (isImportedType(type))
+        {
+            h << WARNING + " ##" << memberVar.second << "##\n";
+        }
+        
         if (!hasKey(memberVar.second))
         {
             h << TAB + "for (auto capnp : capnpReader.get" + up(name) + "())\n";
@@ -642,7 +653,7 @@ void writeCpp()
         auto type = memberVar.second;
         h << TAB + "_" + name + ".clear();\n";
     }
-    h << "}\n";
+    h << "}\n\n";
     
     for (const auto& className : existing_structTypes)
     {
@@ -650,11 +661,17 @@ void writeCpp()
             continue;
         
         std::string starter = ":";
-        h << className + "::" + className + "(" + getReader(className) + " capnpReader )\n";
+        h << className + "::" + className + "(" + getReader(className) + " capnpReader)\n";
         for (const auto& memberVar : members[className])
         {
             auto name = memberVar.first;
             auto type = memberVar.second;
+            
+            if (isImportedType(type))
+            {
+                h << WARNING + " ##" << memberVar.second << "##\n";
+            }
+            
             if(!isCppStructType(type))
                 h << starter + " _" + name + "(capnpReader.get" + up(name) + "())\n";
             else
@@ -671,6 +688,12 @@ void writeCpp()
         {
             auto name = memberVar.first;
             auto type = memberVar.second;
+            
+            if (isImportedType(type))
+            {
+                h << WARNING + " ##" << memberVar.second << "##\n";
+            }
+            
             if (!hasKey(memberVar.second))
             {
                 h << TAB + "for (auto capnp : capnpReader.get" + up(name) + "())\n";
