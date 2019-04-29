@@ -11,7 +11,7 @@
 #include <iostream>
 #include <regex>
 #include <string>
-//#include <unistd.h>
+#include <unistd.h>
 #include <vector>
 #include <map>
 #include <set>
@@ -54,8 +54,10 @@ std::set<std::string> existing_structTypes;                         // struct �
 /* elem - cppName */
 std::set<std::string> existing_importedTypes;                       // .cpp 에 생성된 imported 타입
 
-/* key - cppName, value - cppName */
-std::map<std::string, std::string> keyNames;                        // GB.Key
+/* key - cppName, value - cppType */
+std::map<std::string, std::string> keyTypes;                        // GB.Key
+/* key - cppName, value - capnpName */
+std::map<std::string, std::string> keyNames;
 std::map<std::string, std::deque<std::pair<std::string, std::string>>> members;   //pair<capnpName, cppType>
 std::map<std::string, std::deque<std::pair<std::string, std::string>>> listTypeMembers;   //pair<capnpName, cppType>
 
@@ -96,7 +98,7 @@ bool isImportedType(std::string cppType)
 //key 가 있는가?
 bool hasKey(std::string cppTypeName)
 {
-	return keyNames.count(cppTypeName) != 0;
+	return keyTypes.count(cppTypeName) != 0;
 }
 
 void insertBaseTypes()
@@ -306,7 +308,10 @@ void readElem(std::ifstream& input, std::deque<std::string>& parents, std::strin
             
             //만일 key 타입이면 keyName에 추가
             if(std::regex_match(line, elem_key))
-                keyNames[dir] = cppKeyType;
+            {
+                keyTypes[dir] = cppKeyType;
+                keyNames[dir] = matches[1].str();
+            }
             
             
             if(MY_DEBUG == 2) std::cout << "elem" << '\n';
@@ -420,7 +425,8 @@ void writeHeader()
 	h << "#define " + rootName + "StaticDataManagerInstance gb::gamedata::" + rootName + "::getInstance()\n\n";
 
 	//import들 전방 선언
-	for (auto className : existing_importedTypes)
+    h << "PLEASE CHECK IMPORTED TYPES\n";
+	for (const auto& className : existing_importedTypes)
 	{
 		h << "class " + className + ";\n";
 	}
@@ -429,13 +435,13 @@ void writeHeader()
 	h << "NS_GB_GAMEDATA_BEGIN\n\n";
 
 	//struct들 전방 선언
-	for(auto className : existing_structTypes)
+	for(const auto& className : existing_structTypes)
 	{
 		h << "class " + className + ";\n";
 	}
 	h << "\n";
 
-	for (auto className : existing_structTypes)
+	for (const auto& className : existing_structTypes)
 	{
 		if(className.compare(rootName) != 0)
 			h << "class " + className + "\n";
@@ -484,7 +490,7 @@ void writeHeader()
 			else
 			{
 				//
-				std::string keyType = keyNames[type];
+				std::string keyType = keyTypes[type];
 				h << TAB + "const std::map<" + keyType + ", " + type + ">& getAll" + up(name) +
 					"() const { return _" + name + "; }\n";
 				if (!isCppBaseType(type))
@@ -545,7 +551,7 @@ void writeHeader()
 				h << TAB + "std::vector<" + memberVar.second + "> _" + memberVar.first + ";\n";
 			else
 			{
-				std::string keyType = keyNames[memberVar.second];
+				std::string keyType = keyTypes[memberVar.second];
 				h << TAB + "std::map<" + keyType + ", " + memberVar.second + "> _" + memberVar.first + ";\n";
 			}
 		}
@@ -574,13 +580,118 @@ void writeCpp()
 	h << "//  Created by StaticDataManagerGenerator on " << std::put_time(&tm, "%Y. %m. %d") << "\n";
 	h << "//\n\n";
 
-	h << "#include gb" + rootName + "StaticDataManager.h\n\n";
+	h << "#include \"gb" + rootName + "StaticDataManager.h\"\n";
+    h << "#include \"gbCapnpHelper.h\"\n\n";
 
 	h << "NS_GB_GAMEDATA_BEGIN\n\n";
 
+    h << rootName + "::" + rootName + "()";
+    h << "{\n";
+    h << TAB + "loadStaticData();\n";
+    h << "}\n\n";
+    
+    h << rootName + "::~" + rootName + "()";
+    h << "{\n";
+    h << TAB + "unloadStaticData();\n";
+    h << "}\n\n";
+    
+    h << "void " + rootName + "::loadStaticData()\n";
+    h << "{\n";
+    h << TAB + "auto capnpReader = CapnpHelper::FileReader<gb::capnp::gamedata::" + rootName +
+        ">(\"" + low(rootName) + ".dxc\").getRoot();\n";
+    for (const auto& memberVar : members[rootName])
+    {
+        auto name = memberVar.first;
+        auto type = memberVar.second;
+        if(!isCppStructType(type))
+            h << TAB + " _" + name + " = capnpReader.get" + up(name) + "();\n";
+        else
+        {
+            // , _followerCardConditions(std::make_unique<CardConditionHelper>(capnpReader.getFollowerCardConditions()))
+            h << TAB + " _" + name + " = std::make_unique<" + type +
+            ">(capnpReader.get" + up(name) + "());\n";
+        }
+    }
+    for (const auto& memberVar : listTypeMembers[rootName])
+    {
+        auto name = memberVar.first;
+        auto type = memberVar.second;
+        if (!hasKey(memberVar.second))
+        {
+            h << TAB + "for (auto capnp : capnpReader.get" + up(name) + "())\n";
+            h << TAB + "{\n";
+            h << TAB + TAB + "_" + name + ".emplace_back(capnp);\n";
+            h << TAB + "}\n";
+        }
+        else
+        {
+            h << TAB + "for (auto capnp : capnpReader.get" + up(name) + "())\n";
+            h << TAB + "{\n";
+            h << TAB + TAB + "_" + name + ".emplace(capnp.get" + up(keyNames[type]) +
+            "(), " + type + "(capnp));\n";
+            h << TAB + "}\n";
+        }
+    }
+    h << "}\n\n";
+    
+    h << "void " + rootName + "::unloadStaticData()\n";
+    h << "{\n";
+    for (const auto& memberVar : listTypeMembers[rootName])
+    {
+        auto name = memberVar.first;
+        auto type = memberVar.second;
+        h << TAB + "_" + name + ".clear();\n";
+    }
+    h << "}\n";
+    
+    for (const auto& className : existing_structTypes)
+    {
+        if(className == rootName)
+            continue;
+        
+        std::string starter = ":";
+        h << className + "::" + className + "(" + getReader(className) + " capnpReader )\n";
+        for (const auto& memberVar : members[className])
+        {
+            auto name = memberVar.first;
+            auto type = memberVar.second;
+            if(!isCppStructType(type))
+                h << starter + " _" + name + "(capnpReader.get" + up(name) + "())\n";
+            else
+            {
+                // , _followerCardConditions(std::make_unique<CardConditionHelper>(capnpReader.getFollowerCardConditions()))
+                h << starter + " _" + name + "(std::make_unique<" + type +
+                ">(capnpReader.get" + up(name) + "()))\n";
+            }
+            starter = ",";
+        }
+        h << "{\n";
+        
+        for (const auto& memberVar : listTypeMembers[className])
+        {
+            auto name = memberVar.first;
+            auto type = memberVar.second;
+            if (!hasKey(memberVar.second))
+            {
+                h << TAB + "for (auto capnp : capnpReader.get" + up(name) + "())\n";
+                h << TAB + "{\n";
+                h << TAB + TAB + "_" + name + ".emplace_back(capnp);\n";
+                h << TAB + "}\n";
+            }
+            else
+            {
+                h << TAB + "for (auto capnp : capnpReader.get" + up(name) + "())\n";
+                h << TAB + "{\n";
+                h << TAB + TAB + "_" + name + ".emplace(capnp.get" + up(keyNames[type]) +
+                    ", " + type + "(capnp));\n";
+                h << TAB + "}\n";
+            }
+        }
+        h << "}\n\n";
+    }
 
 
-
+    h << "NS_GB_GAMEDATA_END\n";
 }
 
 int main(int argc, const char * argv[])
@@ -597,8 +708,8 @@ int main(int argc, const char * argv[])
     if(MY_DEBUG)
     {
         char path[1024] = "unavailable";
-        //getcwd(path, sizeof(path));
-        std::cout << "Current path is " << path << '\n';
+        getcwd(path, sizeof(path));
+        std::cout << "Current working dir is " << path << '\n';
         std::cout << "File name: " << argv[1] << std::endl;
     }
     
