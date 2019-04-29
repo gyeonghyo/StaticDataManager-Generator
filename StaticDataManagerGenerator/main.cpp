@@ -569,8 +569,8 @@ void writeCpp()
 	auto t = std::time(nullptr);
 	auto tm = *std::localtime(&t);
 
-	//std::ofstream h("gb" + rootName + "StaticDataManager.cpp");
-	std::ostream& h = std::cout;
+	std::ofstream h("gb" + rootName + "StaticDataManager.cpp");
+	//std::ostream& h = std::cout;
 
 	//주석 정보
 
@@ -721,19 +721,29 @@ int main(int argc, const char * argv[])
 {
     insertBaseTypes();
     
+    std::string fileDir = "Test.capnp";
     if(argc < 1)
     {
-        std::cout << "ERROR: No file name given.";
-        return 0;
+        
+        std::cout << "ERROR: No file name given. Using \"Test.capnp\".\n";
+        //return 0;
     }
-    std::ifstream input(argv[1]);
+    else
+    {
+        fileDir = argv[1];
+    }
+    std::ifstream input(fileDir);
+    if(!input.is_open())
+    {
+        std::cout << "ERROR: file not found\n";
+    }
     
     if(MY_DEBUG)
     {
         char path[1024] = "unavailable";
         getcwd(path, sizeof(path));
         std::cout << "Current working dir is " << path << '\n';
-        std::cout << "File name: " << argv[1] << std::endl;
+        std::cout << "File name: " << fileDir << std::endl;
     }
     
     std::string line;
