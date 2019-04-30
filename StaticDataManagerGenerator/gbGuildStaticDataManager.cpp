@@ -1,28 +1,28 @@
 //
-//  gbGuildModeStaticDataManager.cpp
+//  gbGuildStaticDataManager.cpp
 //  gbGame
 //
 //  Created by StaticDataManagerGenerator on 2019. 04. 30
 //
 
-#include "gbGuildModeStaticDataManager.h"
+#include "gbGuildStaticDataManager.h"
 #include "gbCapnpHelper.h"
 #include "gbItemCapnpHelper.h"
 #include "gbPriceCapnpHelper.h"
 
 NS_GB_GAMEDATA_BEGIN
 
-GuildModeStaticDataManager::GuildModeStaticDataManager()
+GuildStaticDataManager::GuildStaticDataManager()
 {
     loadStaticData();
 }
 
-GuildModeStaticDataManager::~GuildModeStaticDataManager()
+GuildStaticDataManager::~GuildStaticDataManager()
 {
     unloadStaticData();
 }
 
-void GuildModeStaticDataManager::loadStaticData()
+void GuildStaticDataManager::loadStaticData()
 {
     auto capnpReader = CapnpHelper::FileReader<gb::capnp::gamedata::Guild>("guild.dxc").getRoot();
      _config = std::make_unique<GuildConfig>(capnpReader.getConfig());
@@ -49,7 +49,7 @@ void GuildModeStaticDataManager::loadStaticData()
     }
 }
 
-void GuildModeStaticDataManager::unloadStaticData()
+void GuildStaticDataManager::unloadStaticData()
 {
     _levelInfos.clear();
     _guildMarks.clear();
@@ -74,7 +74,7 @@ GuildAdventure_Recommendation::GuildAdventure_Recommendation(const gb::capnp::ga
 GuildAdventure_ResultPool_Rewards::GuildAdventure_ResultPool_Rewards(const gb::capnp::gamedata::GuildAdventure::ResultPool::Rewards::Reader& capnpReader)
 : _weight(capnpReader.getWeight())
 {
-
+CHECK IMPORTED TYPE ##gb::capnp::shared::ItemData##
     for (auto capnp : capnpReader.getItem())
     {
         _item.emplace_back(item::ItemCapnpHelper::makeItem(capnp));
@@ -90,7 +90,7 @@ GuildAttendanceTable::GuildAttendanceTable(const gb::capnp::gamedata::GuildAtten
 }
 
 GuildConfig::GuildConfig(const gb::capnp::gamedata::GuildConfig::Reader& capnpReader)
-
+CHECK IMPORTED TYPE ##gb::capnp::gamedata::Price##
 : _guildCreatePrice(shop::PriceCapnpHelper::makePrice(capnpReader.getGuildCreatePrice()))
 , _guildCreateMinLevel(capnpReader.getGuildCreateMinLevel())
 , _guildCreateCooldownSec(capnpReader.getGuildCreateCooldownSec())
@@ -129,9 +129,9 @@ GuildLevelInfo::GuildLevelInfo(const gb::capnp::gamedata::GuildLevelInfo::Reader
 }
 
 GuildShop_SlotItem::GuildShop_SlotItem(const gb::capnp::gamedata::GuildShop::SlotItem::Reader& capnpReader)
-
+CHECK IMPORTED TYPE ##gb::capnp::shared::ItemData##
 : _item(item::ItemCapnpHelper::makeItem(capnpReader.getItem()))
-
+CHECK IMPORTED TYPE ##gb::capnp::gamedata::Price##
 , _price(shop::PriceCapnpHelper::makePrice(capnpReader.getPrice()))
 , _buyCoolDownSec(capnpReader.getBuyCoolDownSec())
 , _maxBuyCount(capnpReader.getMaxBuyCount())
@@ -289,26 +289,25 @@ const GuildShop_SlotCandidateTable* GuildShop::getSlotCandidateTable(const int16
     auto it = _slotCandidateTables.find(id);
     return it != _slotCandidateTables.end() ? it->second.get() : nullptr;
 }
-const GuildLevelInfo* GuildModeStaticDataManager::getLevelInfo(const int32_t id) const
+const GuildLevelInfo* GuildStaticDataManager::getLevelInfo(const int32_t id) const
 {
     auto it = _levelInfos.find(id);
     return it != _levelInfos.end() ? it->second.get() : nullptr;
 }
-const GuildMark* GuildModeStaticDataManager::getGuildMark(const int32_t id) const
+const GuildMark* GuildStaticDataManager::getGuildMark(const int32_t id) const
 {
     auto it = _guildMarks.find(id);
     return it != _guildMarks.end() ? it->second.get() : nullptr;
 }
-const GuildAdventure* GuildModeStaticDataManager::getAdventure(const int32_t id) const
+const GuildAdventure* GuildStaticDataManager::getAdventure(const int32_t id) const
 {
     auto it = _adventures.find(id);
     return it != _adventures.end() ? it->second.get() : nullptr;
 }
-const GuildAttendanceTable* GuildModeStaticDataManager::getAttendanceTable(const int32_t id) const
+const GuildAttendanceTable* GuildStaticDataManager::getAttendanceTable(const int32_t id) const
 {
     auto it = _attendanceTables.find(id);
     return it != _attendanceTables.end() ? it->second.get() : nullptr;
 }
-
 
 NS_GB_GAMEDATA_END
