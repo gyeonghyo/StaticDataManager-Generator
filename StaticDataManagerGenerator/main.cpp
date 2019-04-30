@@ -25,7 +25,7 @@
 #define MY_DEBUG 4
 #define LINES_TO_IGNORE 11
 #define TAB (std::string)"    "
-#define WARNING (std::string)"PLEASE CHECK IMPORTED TYPE"
+#define WARNING (std::string)"CHECK IMPORTED TYPE"
 
 //using namespace std;
 
@@ -65,12 +65,17 @@ std::map<std::string, std::deque<std::pair<std::string, std::string>>> listTypeM
 /* elem - cppType*/
 std::set<std::string> baseTypes;
 
+// struct 별 dependency 추적
+std::map<std::string, std::set<std::string>> to;
+std::map<std::string, std::set<std::string>> from;
+
 std::string rootName;
 
 //util
 std::string low(std::string orig);
 std::string up(std::string orig);
 std::string replaceAll(std::string str, const std::string& from, const std::string& to);
+std::deque<std::string> topologicalSort();
 
 //capnp baseType 인가?
 bool isBaseType(std::string typeName)
@@ -252,8 +257,8 @@ void readElem(std::ifstream& input, std::deque<std::string>& parents, std::strin
                 if(std::regex_match(keyType, matches_dot, hasDot))
                 {
                     has_Dot = true;
-                    keyType = matches_dot[1].str();
                     nestedType = matches_dot[2].str();
+                    keyType = matches_dot[1].str();
                 }
                 
                 /*
@@ -305,6 +310,11 @@ void readElem(std::ifstream& input, std::deque<std::string>& parents, std::strin
                             if(has_Dot)
                                 cppKeyType += '_' + nestedType;
                             found = true;
+                            
+                            //dependency check
+                            to[dir].insert(cppKeyType);
+                            from[cppKeyType].insert(dir);
+                            
                             break;
                         }
                     }
@@ -414,7 +424,7 @@ void readStruct(std::ifstream& input, std::deque<std::string>& parents, std::str
 }
 
 //헤더 파일 작성
-void writeHeader()
+void writeHeader(std::deque<std::string>& structs)
 {
 	auto t = std::time(nullptr);
 	auto tm = *std::localtime(&t);
@@ -435,33 +445,39 @@ void writeHeader()
 	h << "#define gb" + rootName + "StaticDataManager_h\n\n";
 
 	h << "#include \"gbStaticDataManager.h\"\n";
-	h << "#include \"capnp/gamedata/" + low(rootName) + ".capnp.h\n\n";
+	h << "#include \"capnp/gamedata/" + low(rootName) + ".capnp.h\"\n\n";
 
-	h << "#define " + rootName + "StaticDataManagerInstance gb::gamedata::" + rootName + "::getInstance()\n\n";
-
+	h << "#define " + rootName + "StaticDataManagerInstance gb::gamedata::" + rootName +
+        "StaticDataManager::getInstance()\n\n";
+    
 	//import들 전방 선언
+    /*
     h << WARNING + "\n";
 	for (const auto& className : existing_importedTypes)
 	{
 		h << "class " + className + ";\n";
 	}
 	h << "\n";
+     */
 
 	h << "NS_GB_GAMEDATA_BEGIN\n\n";
 
 	//struct들 전방 선언
-	for(const auto& className : existing_structTypes)
+    /*
+	for(const auto& className : structs)
 	{
 		h << "class " + className + ";\n";
 	}
 	h << "\n";
+     */
 
-	for (const auto& className : existing_structTypes)
+	for (const auto& className : structs)
 	{
 		if(className.compare(rootName) != 0)
 			h << "class " + className + "\n";
 		else
-			h << "class " + className + " : public StaticDataManager<" + rootName + ">\n";
+			h << "class " + className + "StaticDataManager \n: public StaticDataManager<" + rootName +
+                "StaticDataManager>\n";
 		h << "{\n";
 
 		// public -> constructor 생성
@@ -472,13 +488,18 @@ void writeHeader()
 		}
 		else
 		{
-			h << TAB + rootName + "();\n";
-			h << TAB + "~" + rootName + "();\n";
+			h << TAB + rootName + "StaticDataManager();\n";
+			h << TAB + "~" + rootName + "StaticDataManager();\n";
 		}
 
 		// getter 생성
 		for (const auto& memberVar : members[className])
 		{
+            if (isImportedType(memberVar.second))
+            {
+                h << WARNING + " ##" << memberVar.second << "##\n";
+            }
+            
 			if (!isCppStructType(memberVar.second))
 			{
 				// int64_t getStartTime() const { return _startTime; }
@@ -496,6 +517,12 @@ void writeHeader()
 		{
 			auto name = memberVar.first;
 			auto type = memberVar.second;
+            
+            if (isImportedType(type))
+            {
+                h << WARNING + " ##" << memberVar.second << "##\n";
+            }
+            
 			if (!hasKey(memberVar.second))
 			{
 				// const std::vector<MysteryMazeFollowerMapInfo>& getFollowerMapInfos() const { return _followerMapInfos; }
@@ -578,7 +605,7 @@ void writeHeader()
 	h << "#endif\n";
 }
 
-void writeCpp()
+void writeCpp(std::deque<std::string>& structs)
 {
 	auto t = std::time(nullptr);
 	auto tm = *std::localtime(&t);
@@ -600,17 +627,17 @@ void writeCpp()
 
 	h << "NS_GB_GAMEDATA_BEGIN\n\n";
 
-    h << rootName + "::" + rootName + "()\n";
+    h << rootName + "StaticDataManager::" + rootName + "StaticDataManager()\n";
     h << "{\n";
     h << TAB + "loadStaticData();\n";
     h << "}\n\n";
     
-    h << rootName + "::~" + rootName + "()\n";
+    h << rootName + "StaticDataManager::~" + rootName + "StaticDataManager()\n";
     h << "{\n";
     h << TAB + "unloadStaticData();\n";
     h << "}\n\n";
     
-    h << "void " + rootName + "::loadStaticData()\n";
+    h << "void " + rootName + "StaticDataManager::loadStaticData()\n";
     h << "{\n";
     h << TAB + "auto capnpReader = CapnpHelper::FileReader<gb::capnp::gamedata::" + rootName +
         ">(\"" + low(rootName) + ".dxc\").getRoot();\n";
@@ -659,7 +686,7 @@ void writeCpp()
     }
     h << "}\n\n";
     
-    h << "void " + rootName + "::unloadStaticData()\n";
+    h << "void " + rootName + "StaticDataManager::unloadStaticData()\n";
     h << "{\n";
     for (const auto& memberVar : listTypeMembers[rootName])
     {
@@ -669,7 +696,7 @@ void writeCpp()
     }
     h << "}\n\n";
     
-    for (const auto& className : existing_structTypes)
+    for (const auto& className : structs)
     {
         if(className == rootName)
             continue;
@@ -720,7 +747,7 @@ void writeCpp()
                 h << TAB + "for (auto capnp : capnpReader.get" + up(name) + "())\n";
                 h << TAB + "{\n";
                 h << TAB + TAB + "_" + name + ".emplace(capnp.get" + up(keyNames[type]) +
-                    ", " + type + "(capnp));\n";
+                    "(), " + type + "(capnp));\n";
                 h << TAB + "}\n";
             }
         }
@@ -898,10 +925,13 @@ int main(int argc, const char * argv[])
             return 0;
         }
     }
+    
+    //root에서 도달할 수 없는 struct 제거/ dependency graph 체크 후 올바른 순서로 위상 정렬
+    auto validStructs = topologicalSort();
 
-	writeHeader();
+	writeHeader(validStructs);
 
-	writeCpp();
+	writeCpp(validStructs);
 
     return 0;
 }
@@ -927,4 +957,36 @@ std::string replaceAll(std::string str, const std::string& from, const std::stri
 		start_pos += to.length(); // Handles case where 'to' is a substring of 'from'
 	}
 	return str;
+}
+
+std::deque<std::string> topologicalSort()
+{
+    std::deque<std::string> ret;
+    std::deque<std::string> toRemove;
+    for(const auto& st : existing_structTypes)
+    {
+        if(to.count(st) == 0)
+        {
+            if(from[st].size() == 0 && st.compare(rootName) != 0)
+                continue;
+            toRemove.push_back(st);
+        }
+    }
+    while(!toRemove.empty())
+    {
+        std::string rem = toRemove.front();
+        toRemove.pop_front();
+        if(from[rem].size() == 0 && rem.compare(rootName) != 0)
+            continue;
+        
+        ret.push_back(rem);
+        
+        for(const auto& myFrom : from[rem])
+        {
+            to[myFrom].erase(rem);
+            if(to[myFrom].size() == 0)
+                toRemove.push_back(myFrom);
+        }
+    }
+    return ret;
 }
