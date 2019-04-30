@@ -165,7 +165,7 @@ void insertSpecialImports()
     SpecialImport_returnType["gb::capnp::gamedata::Price"] = "shop::Price*";
     SpecialImport_pureType["gb::capnp::gamedata::Price"] = "shop::Price";
     SpecialImport_getter["gb::capnp::gamedata::Price"] = "shop::PriceCapnpHelper::makePrice";
-    SpecialImport_header.insert("gbItemCapnpHelper.h");
+    SpecialImport_header.insert("gbPriceCapnpHelper.h");
     SpecialImport_forward.insert(
                                  "NS_GB_GAMEDATA_SHOP_BEGIN\n"
                                  "class Price;\n"
@@ -584,7 +584,7 @@ void writeHeader(std::deque<std::string>& structs)
 			if (!isCppStructType(type))
 			{
 				// int64_t getStartTime() const { return _startTime; }
-				h << TAB + retType + " get" + up(memberVar.first) + "() const { return _" + memberVar.first + "; }\n";
+				h << TAB + retType + " get" + up(memberVar.first) + "() const { return _" + memberVar.first + ".get(); }\n";
 			}
 			else
 			{
@@ -631,7 +631,7 @@ void writeHeader(std::deque<std::string>& structs)
                 
                 if(option_macro)
                 {
-                    h << TAB + "GB_SYNTHESIZE_READONLY_PASS_BY_REF(const std::vector<" + pointerType + ">, _" + name + ", " + up(name) + ");\n";
+                    h << TAB + "GB_SYNTHESIZE_READONLY_PASS_BY_REF(std::vector<" + pointerType + ">, _" + name + ", " + up(name) + ");\n";
                     continue;
                 }
 				h << TAB + "const std::vector<" + pointerType + ">& get" + up(name) + "() const { return _" +
@@ -953,6 +953,11 @@ void writeCpp(std::deque<std::string>& structs)
             {
                 std::string keyType = keyTypes[type];
                 std::string returnMethod = "it->second.get()";
+                std::string classNameDisplay = className;
+                if(classNameDisplay.compare(rootName) == 0)
+                {
+                    classNameDisplay += "StaticDataManager";
+                }
                 if(!option_pointer)
                 {
                     returnMethod = "& it->second";
@@ -964,7 +969,8 @@ void writeCpp(std::deque<std::string>& structs)
                 //}
                 if (isCppStructType(type))
                 {
-                    h << "const " + type + "* get" + up(singular(name)) + "(const " + keyType + " id) \n" +
+                    h << "const " + type + "* " + classNameDisplay
+                    + "::get" + up(singular(name)) + "(const " + keyType + " id) const\n" +
                     "{\n" +
                     TAB + "auto it = _" + name + ".find(id);\n" +
                     TAB + "return it != _" + name + ".end() ? " + returnMethod +
@@ -973,7 +979,7 @@ void writeCpp(std::deque<std::string>& structs)
                 }
                 else
                 {
-                    h << type + " get" + up(singular(name)) + "(const " + keyType + " id) \n" +
+                    h << type + " " + classNameDisplay + "::get" + up(singular(name)) + "(const " + keyType + " id) const\n" +
                     "{\n" +
                     TAB + "auto it = _" + name + ".find(id);\n" +
                     TAB + "return it != _" + name + ".end() ? it->second : nullptr;\n" +
