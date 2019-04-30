@@ -68,6 +68,13 @@ std::map<std::string, std::string> structComments;  //cppName -> comment
 /* elem - cppType*/
 std::set<std::string> baseTypes;
 
+std::map<std::string, std::string> SpecialImport_type;  //저장 type
+std::map<std::string, std::string> SpecialImport_returnType;
+std::map<std::string, std::string> SpecialImport_pureType;
+std::map<std::string, std::string> SpecialImport_getter;
+std::set<std::string> SpecialImport_header; //cpp용 헤더들
+std::set<std::string> SpecialImport_forward; //전방 선언
+
 // struct 별 dependency 추적
 std::map<std::string, std::set<std::string>> to;
 std::map<std::string, std::set<std::string>> from;
@@ -80,6 +87,7 @@ enum class pointerOption{unique, shared};
 pointerOption myPO = pointerOption::shared;
 
 bool option_macro = false;
+bool option_autoImport = true;
 
 //util
 std::string low(std::string orig);
@@ -112,6 +120,11 @@ bool isImportedType(std::string cppType)
 	return existing_importedTypes.count(cppType) != 0;
 }
 
+bool isSpecialImportedType(std::string cppType)
+{
+    return SpecialImport_type.count(cppType) != 0;
+}
+
 //key 가 있는가?
 bool hasKey(std::string cppTypeName)
 {
@@ -131,6 +144,32 @@ void insertBaseTypes()
 	{
 		baseTypes.insert(pa.second);
 	}
+}
+
+void insertSpecialImports()
+{
+    if(!option_autoImport)
+        return;
+    
+    SpecialImport_type["gb::capnp::shared::ItemData"] = "std::unique_ptr<item::Item>";
+    SpecialImport_returnType["gb::capnp::shared::ItemData"] = "item::Item*";
+    SpecialImport_pureType["gb::capnp::shared::ItemData"] = "item::Item";
+    SpecialImport_getter["gb::capnp::shared::ItemData"] = "item::ItemCapnpHelper::makeItem";
+    SpecialImport_header.insert("gbItemCapnpHelper.h");
+    SpecialImport_forward.insert(
+    "NS_GB_ITEM_BEGIN\n"
+    "class Item;\n"
+    "NS_GB_ITEM_END\n");
+
+    SpecialImport_type["gb::capnp::gamedata::Price"] = "std::unique_ptr<shop::Price>";
+    SpecialImport_returnType["gb::capnp::gamedata::Price"] = "shop::Price*";
+    SpecialImport_pureType["gb::capnp::gamedata::Price"] = "shop::Price";
+    SpecialImport_getter["gb::capnp::gamedata::Price"] = "shop::PriceCapnpHelper::makePrice";
+    SpecialImport_header.insert("gbItemCapnpHelper.h");
+    SpecialImport_forward.insert(
+                                 "NS_GB_GAMEDATA_SHOP_BEGIN\n"
+                                 "class Price;\n"
+                                 "NS_GB_GAMEDATA_SHOP_END\n");
 }
 
 std::string getKey(std::deque<std::string>& parents, std::string name = "")
@@ -466,10 +505,24 @@ void writeHeader(std::deque<std::string>& structs)
 	h << "#define gb" + rootName + "StaticDataManager_h\n\n";
 
 	h << "#include \"gbStaticDataManager.h\"\n";
-	h << "#include \"capnp/gamedata/" + low(rootName) + ".capnp.h\"\n\n";
+    h << "#include \"capnp/gamedata/" + low(rootName) + ".capnp.h\"\n";
+    for(auto& head : SpecialImport_header)
+    {
+        h << "#include \"" + head + "\"\n";
+    }
+    if(option_macro)
+    {
+        h << "#include \"gbMacros.h\"\n";
+    }
+    h << "\n";
 
 	h << "#define " + rootName + "StaticDataManagerInstance gb::gamedata::" + rootName +
         "StaticDataManager::getInstance()\n\n";
+    
+    for(auto& forw : SpecialImport_forward)
+    {
+        h << forw << '\n';
+    }
     
 	h << "NS_GB_GAMEDATA_BEGIN\n\n";
 
@@ -513,15 +566,30 @@ void writeHeader(std::deque<std::string>& structs)
                 h << WARNING + " ##" << memberVar.second << "##\n";
             }
             
-			if (!isCppStructType(memberVar.second))
+            if (isCppBaseType(type) && option_macro)
+            {
+                if(type.compare("std::string") == 0)
+                    h << TAB + "GB_SYNTHESIZE_READONLY_PASS_BY_REF(" + type + ", _" + name + ", " + up(name) + ");\n";
+                else
+                    h << TAB + "GB_SYNTHESIZE_READONLY(" + type + ", _" + name + ", " + up(name) + ");\n";
+                continue;
+            }
+            
+            std::string retType = type;
+            if(isSpecialImportedType(type))
+            {
+                retType = SpecialImport_returnType[type];
+            }
+            
+			if (!isCppStructType(type))
 			{
 				// int64_t getStartTime() const { return _startTime; }
-				h << TAB + memberVar.second + " get" + up(memberVar.first) + "() const { return _" + memberVar.first + "; }\n";
+				h << TAB + retType + " get" + up(memberVar.first) + "() const { return _" + memberVar.first + "; }\n";
 			}
 			else
 			{
 				// const Row* getRowForOrder(const int16_t order) const;
-				h << TAB + "const " + memberVar.second + "* get" + up(memberVar.first) +
+				h << TAB + "const " + retType + "* get" + up(memberVar.first) +
 					"() const { return _" + memberVar.first + ".get(); }\n";
 			}
 		}
@@ -550,9 +618,21 @@ void writeHeader(std::deque<std::string>& structs)
                     {
                     case pointerOption::unique:
                         pointerType = "std::unique_ptr<" + type + ">";
+                        break;
                     case pointerOption::shared:
                         pointerType = "std::shared_ptr<" + type + ">";
+                        break;
                     }
+                }
+                else if(isSpecialImportedType(type))
+                {
+                    pointerType = SpecialImport_type[type];
+                }
+                
+                if(option_macro)
+                {
+                    h << TAB + "GB_SYNTHESIZE_READONLY_PASS_BY_REF(const std::vector<" + pointerType + ">, _" + name + ", " + up(name) + ");\n";
+                    continue;
                 }
 				h << TAB + "const std::vector<" + pointerType + ">& get" + up(name) + "() const { return _" +
 					name + "; }\n";
@@ -560,19 +640,28 @@ void writeHeader(std::deque<std::string>& structs)
 			else
 			{
 				std::string keyType = keyTypes[type];
+                std::string retType = type;
                 if(isCppStructType(type) && option_pointer)
                 {
                     switch (myPO)
                     {
                         case pointerOption::unique:
                             pointerType = "std::unique_ptr<" + type + ">";
+                            break;
                         case pointerOption::shared:
                             pointerType = "std::shared_ptr<" + type + ">";
+                            break;
                     }
                 }
+                else if(isSpecialImportedType(type))
+                {
+                    pointerType = SpecialImport_type[type];
+                    retType = SpecialImport_pureType[type];
+                }
+                
 				h << TAB + "const std::map<" + keyType + ", " + pointerType + ">& getAll" + up(name) +
 					"() const { return _" + name + "; }\n";
-                h << TAB + "const " + type + "* get" + up(singular(name)) + "(const " +
+                h << TAB + "const " + retType + "* get" + up(singular(name)) + "(const " +
                     keyType + " id) const;\n";
                 
 			}
@@ -590,15 +679,23 @@ void writeHeader(std::deque<std::string>& structs)
 		// 비 list 타입 멤버 변수
 		for (const auto& memberVar : members[className])
 		{
-            if (isImportedType(memberVar.second))
+            auto type = memberVar.second;
+            auto saveType = type;
+            if (isCppBaseType(type) && option_macro)
+                continue;
+            if (isImportedType(type))
             {
-                h << WARNING + " ##" << memberVar.second << "##\n";
+                h << WARNING + " ##" << type << "##\n";
+                if(isSpecialImportedType(type))
+                {
+                    saveType = SpecialImport_type[type];
+                }
             }
 
-			if(!isCppStructType(memberVar.second))
-				h << TAB + memberVar.second + " _" + memberVar.first + ";\n";
+			if(!isCppStructType(type))
+				h << TAB + saveType + " _" + memberVar.first + ";\n";
 			else
-				h << TAB + "std::unique_ptr<" + memberVar.second + "> _" + memberVar.first + ";\n";
+				h << TAB + "std::unique_ptr<" + type + "> _" + memberVar.first + ";\n";
 		}
 		// list 타입 멤버 변수
 		for (const auto& memberVar : listTypeMembers[className])
@@ -612,18 +709,27 @@ void writeHeader(std::deque<std::string>& structs)
                 {
                     case pointerOption::unique:
                         pointerType = "std::unique_ptr<" + type + ">";
+                        break;
                     case pointerOption::shared:
                         pointerType = "std::shared_ptr<" + type + ">";
+                        break;
                 }
             }
+            
+            if (!hasKey(memberVar.second) && option_macro)
+                continue;
             
 			if (isImportedType(memberVar.second))
 			{
 				h << WARNING + " ##" << memberVar.second << "##\n";
+                if(isSpecialImportedType(type))
+                    pointerType = SpecialImport_type[type];
 			}
 
 			if (!hasKey(memberVar.second))
+            {
 				h << TAB + "std::vector<" + pointerType + "> _" + memberVar.first + ";\n";
+            }
 			else
 			{
 				std::string keyType = keyTypes[memberVar.second];
@@ -683,13 +789,18 @@ void writeCpp(std::deque<std::string>& structs)
             h << WARNING + " ##" << memberVar.second << "##\n";
         }
         
-        if(!isCppStructType(type))
+        if(isSpecialImportedType(type))
+        {
+            h << TAB + " _" + name + " = " + SpecialImport_getter[type] +
+                "(capnpReader.get" + up(name) + "());\n";
+        }
+        else if(!isCppStructType(type))
             h << TAB + " _" + name + " = capnpReader.get" + up(name) + "();\n";
         else
         {
             // , _followerCardConditions(std::make_unique<CardConditionHelper>(capnpReader.getFollowerCardConditions()))
             h << TAB + " _" + name + " = std::make_unique<" + type +
-            ">(capnpReader.get" + up(name) + "());\n";
+                ">(capnpReader.get" + up(name) + "());\n";
         }
     }
     for (const auto& memberVar : listTypeMembers[rootName])
@@ -707,9 +818,15 @@ void writeCpp(std::deque<std::string>& structs)
             {
                 case pointerOption::unique:
                     pointerType = "std::make_unique<" + type + ">";
+                    break;
                 case pointerOption::shared:
                     pointerType = "std::make_shared<" + type + ">";
+                    break;
             }
+        }
+        if(isSpecialImportedType(type))
+        {
+            pointerType = SpecialImport_getter[type];
         }
         
         if (!hasKey(memberVar.second))
@@ -757,7 +874,12 @@ void writeCpp(std::deque<std::string>& structs)
                 h << WARNING + " ##" << memberVar.second << "##\n";
             }
             
-            if(!isCppStructType(type))
+            if(isSpecialImportedType(type))
+            {
+                auto getter = SpecialImport_getter[type];
+                h << starter + " _" + name + "(" + getter + "(capnpReader.get" + up(name) + "()))\n";
+            }
+            else if(!isCppStructType(type))
                 h << starter + " _" + name + "(capnpReader.get" + up(name) + "())\n";
             else
             {
@@ -786,14 +908,20 @@ void writeCpp(std::deque<std::string>& structs)
                     {
                         case pointerOption::unique:
                             pointerType = "std::make_unique<" + type + ">";
+                            break;
                         case pointerOption::shared:
                             pointerType = "std::make_shared<" + type + ">";
+                            break;
                     }
                 }
                 else
                 {
                     pointerType = type;
                 }
+            }
+            if(isSpecialImportedType(type))
+            {
+                pointerType = SpecialImport_getter[type];
             }
             
             if (!hasKey(type))
@@ -861,9 +989,10 @@ void writeCpp(std::deque<std::string>& structs)
 int main(int argc, const char * argv[])
 {
     insertBaseTypes();
+    insertSpecialImports();
     
     std::string fileDir = "Test.capnp";
-    if(argc < 1)
+    if(argc < 2)
     {
         std::cout << "ERROR: No file name given. Using \"Test.capnp\".\n";
         //return 0;
@@ -879,20 +1008,24 @@ int main(int argc, const char * argv[])
     }
     
     
-    for(int arg = 2; arg <= argc; arg++)
+    for(int arg = 2; arg < argc; arg++)
     {
-        std::string str = (std::string)argv[arg];
+        std::string str(argv[arg]);
         if(str.compare("-u") == 0)
         {
             myPO = pointerOption::unique;
         }
-        else if(str.compare("-n") == 0)
+        else if(str.compare("-np") == 0)
         {
             option_pointer = false;
         }
         else if(str.compare("-m") == 0)
         {
             option_macro = true;
+        }
+        else if(str.compare("-ni") == 0)
+        {
+            option_autoImport = false;
         }
     }
     
