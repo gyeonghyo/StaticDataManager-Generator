@@ -29,7 +29,7 @@
 
 //using namespace std;
 
-std::regex comment("\\s*#.*");                                                          // # 시즌 종료 후 정산하는데 쓸 여유 시간
+std::regex comment("\\s*#\\s*(.*)");                                                          // # 시즌 종료 후 정산하는데 쓸 여유 시간
 std::regex import("\\s*using\\s+(\\w+)\\s*=\\s*import\\s+([\"./\\w]+)\\s*;\\s*");       // using Action = import "achievements.capnp".Action;
 std::regex import2("\\s*using\\s+import\\s+([\"./\\w]+);\\s*");                         // using import "events.capnp".MessageReward;
 std::regex struct_root("\\s*struct\\s+(\\w+)\\s+\\$Data.root\\s*\\{\\s*");              // struct MysteryMazeMode $Data.root {
@@ -61,6 +61,9 @@ std::map<std::string, std::string> keyTypes;                        // GB.Key
 std::map<std::string, std::string> keyNames;
 std::map<std::string, std::deque<std::pair<std::string, std::string>>> members;   //pair<capnpName, cppType>
 std::map<std::string, std::deque<std::pair<std::string, std::string>>> listTypeMembers;   //pair<capnpName, cppType>
+std::map<std::string, std::map<std::string, std::string>> memberComments;   //capnpName -> comment
+std::map<std::string, std::string> structComments;  //cppName -> comment
+
 
 /* elem - cppType*/
 std::set<std::string> baseTypes;
@@ -71,10 +74,18 @@ std::map<std::string, std::set<std::string>> from;
 
 std::string rootName;
 
+//options
+bool option_pointer = true;
+enum class pointerOption{unique, shared};
+pointerOption myPO = pointerOption::shared;
+
+bool option_macro = false;
+
 //util
 std::string low(std::string orig);
 std::string up(std::string orig);
 std::string replaceAll(std::string str, const std::string& from, const std::string& to);
+std::string singular(std::string name);
 std::deque<std::string> topologicalSort();
 
 //capnp baseType 인가?
@@ -217,16 +228,24 @@ void readElem(std::ifstream& input, std::deque<std::string>& parents, std::strin
     if(MY_DEBUG == 2) std::cout << "dir: " << dir << '\n';
     
     std::string line;
+    std::string prevMember = "";
     while(getline(input, line))
     {
         linenum++;
         std::smatch matches;
         
         if(std::regex_match(line, matches, whiteSpace) ||
-           std::regex_match(line, matches, comment)    ||
            std::regex_match(line, matches, serverOnly))
         {
             continue;
+        }
+        if(std::regex_match(line, matches, comment))
+        {
+            std::string com = matches[1].str();
+            if(prevMember.compare("") == 0)
+                structComments[dir] = com;
+            else
+                memberComments[dir][prevMember] = com;
         }
         else if(std::regex_match(line, matches, struct_usual))
         {
@@ -244,6 +263,8 @@ void readElem(std::ifstream& input, std::deque<std::string>& parents, std::strin
             //capnp의 변수명을 cpp의 변수명으로 변환 후 멤버 변수 리스트에 저장
             std::string cppKeyType = "";
             std::string keyType = matches[2].str();
+            prevMember = matches[1].str();
+            
             if(isBaseType(keyType))
             {
                 cppKeyType = convertName_baseTypes[keyType];
@@ -450,29 +471,13 @@ void writeHeader(std::deque<std::string>& structs)
 	h << "#define " + rootName + "StaticDataManagerInstance gb::gamedata::" + rootName +
         "StaticDataManager::getInstance()\n\n";
     
-	//import들 전방 선언
-    /*
-    h << WARNING + "\n";
-	for (const auto& className : existing_importedTypes)
-	{
-		h << "class " + className + ";\n";
-	}
-	h << "\n";
-     */
-
 	h << "NS_GB_GAMEDATA_BEGIN\n\n";
-
-	//struct들 전방 선언
-    /*
-	for(const auto& className : structs)
-	{
-		h << "class " + className + ";\n";
-	}
-	h << "\n";
-     */
 
 	for (const auto& className : structs)
 	{
+        if(structComments.count(className) != 0)
+            h << "// " + structComments[className] + '\n';
+        
 		if(className.compare(rootName) != 0)
 			h << "class " + className + "\n";
 		else
@@ -484,7 +489,7 @@ void writeHeader(std::deque<std::string>& structs)
 		h << "public:\n";
 		if (className.compare(rootName) != 0)
 		{
-			h << TAB + className + "(" + getReader(className) + " capnpReader);\n";
+			h << TAB + className + "(const " + getReader(className) + "& capnpReader);\n";
 		}
 		else
 		{
@@ -495,6 +500,14 @@ void writeHeader(std::deque<std::string>& structs)
 		// getter 생성
 		for (const auto& memberVar : members[className])
 		{
+            auto name = memberVar.first;
+            auto type = memberVar.second;
+            
+            if (memberComments.count(className) != 0 && memberComments[className].count(name) != 0)
+            {
+                h << TAB + "// " + memberComments[className][name] + '\n';
+            }
+            
             if (isImportedType(memberVar.second))
             {
                 h << WARNING + " ##" << memberVar.second << "##\n";
@@ -512,50 +525,56 @@ void writeHeader(std::deque<std::string>& structs)
 					"() const { return _" + memberVar.first + ".get(); }\n";
 			}
 		}
-		h << "\n";
 		for (const auto& memberVar : listTypeMembers[className])
 		{
 			auto name = memberVar.first;
 			auto type = memberVar.second;
             
+            if (memberComments.count(className) != 0 && memberComments[className].count(name) != 0)
+            {
+                h << TAB + "// " + memberComments[className][name] + '\n';
+            }
+            
             if (isImportedType(type))
             {
                 h << WARNING + " ##" << memberVar.second << "##\n";
             }
-            
+            std::string pointerType = type;
 			if (!hasKey(memberVar.second))
 			{
-				// const std::vector<MysteryMazeFollowerMapInfo>& getFollowerMapInfos() const { return _followerMapInfos; }
-				h << TAB + "const std::vector<" + type + ">& get" + up(name) + "() const { return _" +
+                // const std::vector<std::unique_ptr<MysteryMazeFollowerMapInfo>>& getFollowerMapInfos() const { return _followerMapInfos; }
+                
+                if(isCppStructType(type) && option_pointer)
+                {
+                    switch (myPO)
+                    {
+                    case pointerOption::unique:
+                        pointerType = "std::unique_ptr<" + type + ">";
+                    case pointerOption::shared:
+                        pointerType = "std::shared_ptr<" + type + ">";
+                    }
+                }
+				h << TAB + "const std::vector<" + pointerType + ">& get" + up(name) + "() const { return _" +
 					name + "; }\n";
 			}
 			else
 			{
-				//
 				std::string keyType = keyTypes[type];
-				h << TAB + "const std::map<" + keyType + ", " + type + ">& getAll" + up(name) +
+                if(isCppStructType(type) && option_pointer)
+                {
+                    switch (myPO)
+                    {
+                        case pointerOption::unique:
+                            pointerType = "std::unique_ptr<" + type + ">";
+                        case pointerOption::shared:
+                            pointerType = "std::shared_ptr<" + type + ">";
+                    }
+                }
+				h << TAB + "const std::map<" + keyType + ", " + pointerType + ">& getAll" + up(name) +
 					"() const { return _" + name + "; }\n";
-				if (!isCppBaseType(type))
-				{
-					//const MysteryMazeSeason* getMysteryMazeSeason(const int16_t id) const;
-					//{
-					//	auto it = _seasons.find(id);
-					//	return it != _seasons.end() ? &it->second : nullptr;
-					//}
-					h << TAB + "const " + type + "* get" + up(name) + "(const " + keyType + " id) const\n" +
-						TAB + "{\n" + 
-						TAB + TAB + "auto it = _" + name + ".find(id);\n" +
-						TAB + TAB + "return it != _" + name + ".end() ? & it->second : nullptr;\n" +
-						TAB + "}\n";
-				}
-				else
-				{
-					h << TAB + type + " get" + up(name) + "(const " + keyType + " id) const\n" +
-						TAB + "{\n" +
-						TAB + TAB + "auto it = _" + name + ".find(id);\n" +
-						TAB + TAB + "return it != _" + name + ".end() ? & it->second : nullptr;\n" +
-						TAB + "}\n";
-				}
+                h << TAB + "const " + type + "* get" + up(singular(name)) + "(const " +
+                    keyType + " id) const;\n";
+                
 			}
 		}
 
@@ -584,17 +603,31 @@ void writeHeader(std::deque<std::string>& structs)
 		// list 타입 멤버 변수
 		for (const auto& memberVar : listTypeMembers[className])
 		{
+            auto name = memberVar.first;
+            auto type = memberVar.second;
+            std::string pointerType = type;
+            if(isCppStructType(type) && option_pointer)
+            {
+                switch (myPO)
+                {
+                    case pointerOption::unique:
+                        pointerType = "std::unique_ptr<" + type + ">";
+                    case pointerOption::shared:
+                        pointerType = "std::shared_ptr<" + type + ">";
+                }
+            }
+            
 			if (isImportedType(memberVar.second))
 			{
 				h << WARNING + " ##" << memberVar.second << "##\n";
 			}
 
 			if (!hasKey(memberVar.second))
-				h << TAB + "std::vector<" + memberVar.second + "> _" + memberVar.first + ";\n";
+				h << TAB + "std::vector<" + pointerType + "> _" + memberVar.first + ";\n";
 			else
 			{
 				std::string keyType = keyTypes[memberVar.second];
-				h << TAB + "std::map<" + keyType + ", " + memberVar.second + "> _" + memberVar.first + ";\n";
+				h << TAB + "std::map<" + keyType + ", " + pointerType + "> _" + memberVar.first + ";\n";
 			}
 		}
 		h << "};\n\n";
@@ -667,12 +700,23 @@ void writeCpp(std::deque<std::string>& structs)
         {
             h << WARNING + " ##" << memberVar.second << "##\n";
         }
+        std::string pointerType = type;
+        if(isCppStructType(type) && option_pointer)
+        {
+            switch (myPO)
+            {
+                case pointerOption::unique:
+                    pointerType = "std::make_unique<" + type + ">";
+                case pointerOption::shared:
+                    pointerType = "std::make_shared<" + type + ">";
+            }
+        }
         
         if (!hasKey(memberVar.second))
         {
             h << TAB + "for (auto capnp : capnpReader.get" + up(name) + "())\n";
             h << TAB + "{\n";
-            h << TAB + TAB + "_" + name + ".emplace_back(capnp);\n";
+            h << TAB + TAB + "_" + name + ".emplace_back(" + pointerType + "(capnp));\n";
             h << TAB + "}\n";
         }
         else
@@ -680,7 +724,7 @@ void writeCpp(std::deque<std::string>& structs)
             h << TAB + "for (auto capnp : capnpReader.get" + up(name) + "())\n";
             h << TAB + "{\n";
             h << TAB + TAB + "_" + name + ".emplace(capnp.get" + up(keyNames[type]) +
-            "(), " + type + "(capnp));\n";
+            "(), " + pointerType + "(capnp));\n";
             h << TAB + "}\n";
         }
     }
@@ -702,7 +746,7 @@ void writeCpp(std::deque<std::string>& structs)
             continue;
         
         std::string starter = ":";
-        h << className + "::" + className + "(" + getReader(className) + " capnpReader)\n";
+        h << className + "::" + className + "(const " + getReader(className) + "& capnpReader)\n";
         for (const auto& memberVar : members[className])
         {
             auto name = memberVar.first;
@@ -729,17 +773,34 @@ void writeCpp(std::deque<std::string>& structs)
         {
             auto name = memberVar.first;
             auto type = memberVar.second;
-            
             if (isImportedType(type))
             {
                 h << WARNING + " ##" << memberVar.second << "##\n";
             }
+            std::string pointerType = "";
+            if(isCppStructType(type))
+            {
+                if(option_pointer)
+                {
+                    switch (myPO)
+                    {
+                        case pointerOption::unique:
+                            pointerType = "std::make_unique<" + type + ">";
+                        case pointerOption::shared:
+                            pointerType = "std::make_shared<" + type + ">";
+                    }
+                }
+                else
+                {
+                    pointerType = type;
+                }
+            }
             
-            if (!hasKey(memberVar.second))
+            if (!hasKey(type))
             {
                 h << TAB + "for (auto capnp : capnpReader.get" + up(name) + "())\n";
                 h << TAB + "{\n";
-                h << TAB + TAB + "_" + name + ".emplace_back(capnp);\n";
+                h << TAB + TAB + "_" + name + ".emplace_back(" + pointerType + "(capnp));\n";
                 h << TAB + "}\n";
             }
             else
@@ -747,15 +808,54 @@ void writeCpp(std::deque<std::string>& structs)
                 h << TAB + "for (auto capnp : capnpReader.get" + up(name) + "())\n";
                 h << TAB + "{\n";
                 h << TAB + TAB + "_" + name + ".emplace(capnp.get" + up(keyNames[type]) +
-                    "(), " + type + "(capnp));\n";
+                    "(), " + pointerType + "(capnp));\n";
                 h << TAB + "}\n";
             }
         }
         h << "}\n\n";
     }
+    
+    for(const auto& className : structs)
+    {
+        for(const auto& memberVar : listTypeMembers[className])
+        {
+            auto name = memberVar.first;
+            auto type = memberVar.second;
+            if(hasKey(type))
+            {
+                std::string keyType = keyTypes[type];
+                std::string returnMethod = "it->second.get()";
+                if(!option_pointer)
+                {
+                    returnMethod = "& it->second";
+                }
+                //const MysteryMazeSeason* getMysteryMazeSeason(const int16_t id) const;
+                //{
+                //    auto it = _seasons.find(id);
+                //    return it != _seasons.end() ? it->second.get() : nullptr;
+                //}
+                if (isCppStructType(type))
+                {
+                    h << "const " + type + "* get" + up(singular(name)) + "(const " + keyType + " id) \n" +
+                    "{\n" +
+                    TAB + "auto it = _" + name + ".find(id);\n" +
+                    TAB + "return it != _" + name + ".end() ? " + returnMethod +
+                        " : nullptr;\n" +
+                    "}\n";
+                }
+                else
+                {
+                    h << type + " get" + up(singular(name)) + "(const " + keyType + " id) \n" +
+                    "{\n" +
+                    TAB + "auto it = _" + name + ".find(id);\n" +
+                    TAB + "return it != _" + name + ".end() ? it->second : nullptr;\n" +
+                    "}\n";
+                }
+            }
+        }
+    }
 
-
-    h << "NS_GB_GAMEDATA_END\n";
+    h << "\nNS_GB_GAMEDATA_END\n";
 }
 
 int main(int argc, const char * argv[])
@@ -765,7 +865,6 @@ int main(int argc, const char * argv[])
     std::string fileDir = "Test.capnp";
     if(argc < 1)
     {
-        
         std::cout << "ERROR: No file name given. Using \"Test.capnp\".\n";
         //return 0;
     }
@@ -777,6 +876,24 @@ int main(int argc, const char * argv[])
     if(!input.is_open())
     {
         std::cout << "ERROR: file not found\n";
+    }
+    
+    
+    for(int arg = 2; arg <= argc; arg++)
+    {
+        std::string str = (std::string)argv[arg];
+        if(str.compare("-u") == 0)
+        {
+            myPO = pointerOption::unique;
+        }
+        else if(str.compare("-n") == 0)
+        {
+            option_pointer = false;
+        }
+        else if(str.compare("-m") == 0)
+        {
+            option_macro = true;
+        }
     }
     
     if(MY_DEBUG)
@@ -957,6 +1074,14 @@ std::string replaceAll(std::string str, const std::string& from, const std::stri
 		start_pos += to.length(); // Handles case where 'to' is a substring of 'from'
 	}
 	return str;
+}
+
+std::string singular(std::string name)
+{
+    if(name[name.length() - 1] == 's')
+        return name.substr(0, name.length() - 1);
+    else
+        return name;
 }
 
 std::deque<std::string> topologicalSort()
