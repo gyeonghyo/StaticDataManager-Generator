@@ -22,7 +22,7 @@
 #include <ctime>
 #include <ctype.h>
 
-#define MY_DEBUG 4
+#define MY_DEBUG 0
 #define LINES_TO_IGNORE 11
 #define TAB (std::string)"    "
 #define WARNING (std::string)"CHECK IMPORTED TYPE"
@@ -72,8 +72,8 @@ std::map<std::string, std::string> SpecialImport_type;  //저장 type
 std::map<std::string, std::string> SpecialImport_returnType;
 std::map<std::string, std::string> SpecialImport_pureType;
 std::map<std::string, std::string> SpecialImport_getter;
-std::set<std::string> SpecialImport_header; //cpp용 헤더들
-std::set<std::string> SpecialImport_forward; //전방 선언
+std::map<std::string, std::set<std::string>> SpecialImport_header; //cpp용 헤더들
+std::map<std::string, std::set<std::string>> SpecialImport_forward; //전방 선언
 
 // struct 별 dependency 추적
 std::map<std::string, std::set<std::string>> to;
@@ -86,7 +86,7 @@ bool option_pointer = true;
 enum class pointerOption{unique, shared};
 pointerOption myPO = pointerOption::shared;
 
-bool option_macro = false;
+bool option_macro = true;
 bool option_autoImport = true;
 
 //util
@@ -155,8 +155,8 @@ void insertSpecialImports()
     SpecialImport_returnType["gb::capnp::shared::ItemData"] = "item::Item*";
     SpecialImport_pureType["gb::capnp::shared::ItemData"] = "item::Item";
     SpecialImport_getter["gb::capnp::shared::ItemData"] = "item::ItemCapnpHelper::makeItem";
-    SpecialImport_header.insert("gbItemCapnpHelper.h");
-    SpecialImport_forward.insert(
+    SpecialImport_header["gb::capnp::shared::ItemData"].insert("gbItemCapnpHelper.h");
+    SpecialImport_forward["gb::capnp::shared::ItemData"].insert(
     "NS_GB_ITEM_BEGIN\n"
     "class Item;\n"
     "NS_GB_ITEM_END\n");
@@ -165,11 +165,11 @@ void insertSpecialImports()
     SpecialImport_returnType["gb::capnp::gamedata::Price"] = "shop::Price*";
     SpecialImport_pureType["gb::capnp::gamedata::Price"] = "shop::Price";
     SpecialImport_getter["gb::capnp::gamedata::Price"] = "shop::PriceCapnpHelper::makePrice";
-    SpecialImport_header.insert("gbPriceCapnpHelper.h");
-    SpecialImport_forward.insert(
-                                 "NS_GB_GAMEDATA_SHOP_BEGIN\n"
-                                 "class Price;\n"
-                                 "NS_GB_GAMEDATA_SHOP_END\n");
+    SpecialImport_header["gb::capnp::shared::ItemData"].insert("gbPriceCapnpHelper.h");
+    SpecialImport_forward["gb::capnp::shared::ItemData"].insert(
+    "NS_GB_GAMEDATA_SHOP_BEGIN\n"
+    "class Price;\n"
+    "NS_GB_GAMEDATA_SHOP_END\n");
 }
 
 std::string getKey(std::deque<std::string>& parents, std::string name = "")
@@ -484,12 +484,41 @@ void readStruct(std::ifstream& input, std::deque<std::string>& parents, std::str
 }
 
 //헤더 파일 작성
-void writeHeader(std::deque<std::string>& structs)
+bool writeHeader(std::deque<std::string>& structs)
 {
 	auto t = std::time(nullptr);
 	auto tm = *std::localtime(&t);
 
-	std::ofstream h("gb" + rootName + "StaticDataManager.h");
+    std::string fileDir = "gb" + rootName + "StaticDataManager.h";
+    std::string fileDir2 = "gb" + rootName + "StaticDataManager.cpp";
+    if (FILE *file = fopen(fileDir.c_str(), "r"))
+    {
+        std::string inp;
+        fclose(file);
+        std::cout << "WARNING: The file " + fileDir + " already exists.\n";
+        std::cout << "Do you wish to overwrite? (y or n)" << std::endl << std::flush;
+        std::getline(std::cin, inp);
+        if(!(inp.compare("Y") == 0 || inp.compare("y") == 0))
+        {
+            std::cout << "aborting process...\n";
+            return false;
+        }
+    }
+    else if(FILE *file = fopen(fileDir2.c_str(), "r"))
+    {
+        std::string inp;
+        fclose(file);
+        std::cout << "WARNING: The file " + fileDir2 + " already exists.\n";
+        std::cout << "Do you wish to overwrite? (y or n)" << std::endl << std::flush;
+        std::getline(std::cin, inp);
+        if(!(inp.compare("Y") == 0 || inp.compare("y") == 0))
+        {
+            std::cout << "aborting process...\n";
+            return false;
+        }
+    }
+    
+	std::ofstream h(fileDir);
 	//std::ostream& h = std::cout;
 
 	//주석 정보
@@ -506,10 +535,6 @@ void writeHeader(std::deque<std::string>& structs)
 
 	h << "#include \"gbStaticDataManager.h\"\n";
     h << "#include \"capnp/gamedata/" + low(rootName) + ".capnp.h\"\n";
-    for(auto& head : SpecialImport_header)
-    {
-        h << "#include \"" + head + "\"\n";
-    }
     if(option_macro)
     {
         h << "#include \"gbMacros.h\"\n";
@@ -519,9 +544,12 @@ void writeHeader(std::deque<std::string>& structs)
 	h << "#define " + rootName + "StaticDataManagerInstance gb::gamedata::" + rootName +
         "StaticDataManager::getInstance()\n\n";
     
-    for(auto& forw : SpecialImport_forward)
+    for(auto& im : SpecialImport_forward)
     {
-        h << forw << '\n';
+        if(existing_importedTypes.count(im.first) == 0)
+            continue;
+        for(auto forw : im.second)
+            h << forw << '\n';
     }
     
 	h << "NS_GB_GAMEDATA_BEGIN\n\n";
@@ -579,12 +607,12 @@ void writeHeader(std::deque<std::string>& structs)
             if(isSpecialImportedType(type))
             {
                 retType = SpecialImport_returnType[type];
+                h << TAB + retType + " get" + up(memberVar.first) + "() const { return _" + memberVar.first + ".get(); }\n";
             }
-            
-			if (!isCppStructType(type))
+			else if (!isCppStructType(type))
 			{
 				// int64_t getStartTime() const { return _startTime; }
-				h << TAB + retType + " get" + up(memberVar.first) + "() const { return _" + memberVar.first + ".get(); }\n";
+				h << TAB + retType + " get" + up(memberVar.first) + "() const { return _" + memberVar.first + "; }\n";
 			}
 			else
 			{
@@ -742,6 +770,7 @@ void writeHeader(std::deque<std::string>& structs)
 	h << "NS_GB_GAMEDATA_END\n\n";
 
 	h << "#endif\n";
+    return true;
 }
 
 void writeCpp(std::deque<std::string>& structs)
@@ -762,8 +791,18 @@ void writeCpp(std::deque<std::string>& structs)
 	h << "//\n\n";
 
 	h << "#include \"gb" + rootName + "StaticDataManager.h\"\n";
-    h << "#include \"gbCapnpHelper.h\"\n\n";
-
+    h << "#include \"gbCapnpHelper.h\"\n";
+    for(auto im : SpecialImport_header)
+    {
+        if(existing_importedTypes.count(im.first) == 0)
+            continue;
+        for(auto& head : im.second)
+        {
+            h << "#include \"" + head + "\"\n";
+        }
+    }
+    h << "\n";
+    
 	h << "NS_GB_GAMEDATA_BEGIN\n\n";
 
     h << rootName + "StaticDataManager::" + rootName + "StaticDataManager()\n";
@@ -994,6 +1033,8 @@ void writeCpp(std::deque<std::string>& structs)
 
 int main(int argc, const char * argv[])
 {
+    std::cout << "starting conversion...\n";
+    
     insertBaseTypes();
     insertSpecialImports();
     
@@ -1007,6 +1048,7 @@ int main(int argc, const char * argv[])
     {
         fileDir = argv[1];
     }
+    
     std::ifstream input(fileDir);
     if(!input.is_open())
     {
@@ -1025,9 +1067,9 @@ int main(int argc, const char * argv[])
         {
             option_pointer = false;
         }
-        else if(str.compare("-m") == 0)
+        else if(str.compare("-nm") == 0)
         {
-            option_macro = true;
+            option_macro = false;
         }
         else if(str.compare("-ni") == 0)
         {
@@ -1185,10 +1227,19 @@ int main(int argc, const char * argv[])
     //root에서 도달할 수 없는 struct 제거/ dependency graph 체크 후 올바른 순서로 위상 정렬
     auto validStructs = topologicalSort();
 
-	writeHeader(validStructs);
+    char path[1024] = "unavailable";
+    getcwd(path, sizeof(path));
+    
+	if(!writeHeader(validStructs))
+        return 0;
 
+    std::cout << path << "/" + rootName + "StaticDataManager.h\n";
+    
 	writeCpp(validStructs);
-
+    
+    std::cout << path << "/" + rootName + "StaticDataManager.cpp\n";
+    std::cout << "finished\n";
+    
     return 0;
 }
 
