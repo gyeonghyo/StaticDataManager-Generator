@@ -29,6 +29,7 @@
 
 //using namespace std;
 
+std::regex complexComment("(.*)#\\s*(.*)");
 std::regex comment("\\s*#\\s*(.*)");                                                          // # 시즌 종료 후 정산하는데 쓸 여유 시간
 std::regex import("\\s*using\\s+(\\w+)\\s*=\\s*import\\s+([\"./\\w]+)\\s*;\\s*");       // using Action = import "achievements.capnp".Action;
 std::regex import2("\\s*using\\s+import\\s+([\"./\\w]+);\\s*");                         // using import "events.capnp".MessageReward;
@@ -218,6 +219,22 @@ std::string getReader(std::string cppType)
 	return ret;
 }
 
+bool extractComment(std::string& line, std::string& com)
+{
+    std::smatch matches;
+    std::string line2 = line;
+    if(std::regex_match(line2, comment))
+       return false;
+    
+    if(std::regex_match(line2, matches, complexComment))
+    {
+        com = matches[2].str();
+        line = matches[1].str();
+        return true;
+    }
+    return false;
+}
+
 //단순히 enum을 convertName_enumTypes 에 저장
 void readEnum(std::ifstream& input, std::deque<std::string>& parents, std::string name, int& linenum)
 {
@@ -232,6 +249,9 @@ void readEnum(std::ifstream& input, std::deque<std::string>& parents, std::strin
     std::string line;
     while(getline(input, line))
     {
+        std::string compComment = "";
+        extractComment(line, compComment);
+        
         linenum++;
         std::smatch matches;
         
@@ -274,6 +294,9 @@ void readElem(std::ifstream& input, std::deque<std::string>& parents, std::strin
     std::string prevMember = "";
     while(getline(input, line))
     {
+        std::string compComment = "";
+        bool hasCompComment = extractComment(line, compComment);
+        
         linenum++;
         std::smatch matches;
         
@@ -298,6 +321,14 @@ void readElem(std::ifstream& input, std::deque<std::string>& parents, std::strin
         {
             readElem(input, parents, matches[1].str(), linenum);
             if(MY_DEBUG == 2) std::cout << "struct_usual" << '\n';
+            
+            if(hasCompComment)
+            {
+                std::string com = compComment;
+                std::string childName = dir.compare("") == 0 ? matches[1].str() : dir + "_" + matches[1].str();
+                structComments[childName].push_back(com);
+                hasCompComment = false;
+            }
         }
         else if(std::regex_match(line, matches, enum_usual))
         {
@@ -426,6 +457,19 @@ void readElem(std::ifstream& input, std::deque<std::string>& parents, std::strin
             std::cout << "The line at fault: \n" << line << "\n\n";
             return;
         }
+        
+        if(hasCompComment)
+        {
+            std::string com = compComment;
+            if(prevMember.compare("") == 0)
+            {
+                structComments[dir].push_back(com);
+            }
+            else
+            {
+                memberComments[dir][prevMember].push_back(com);
+            }
+        }
     }
     
     std::cout << "ERROR: Unexpected end of file at line " << linenum << ".\n";
@@ -449,6 +493,9 @@ void readStruct(std::ifstream& input, std::deque<std::string>& parents, std::str
     std::string line;
     while(getline(input, line))
     {
+        std::string compComment = "";
+        extractComment(line, compComment);
+        
         linenum++;
         std::smatch matches;
         
@@ -1104,6 +1151,9 @@ int main(int argc, const char * argv[])
     /* import 처리 + 1회차: hierarchy 파악 */
     while(getline(input, line))
     {
+        std::string compComment = "";
+        extractComment(line, compComment);
+        
         linenum++;
         std::smatch matches;
         if(linenum <= LINES_TO_IGNORE               ||
@@ -1208,6 +1258,9 @@ int main(int argc, const char * argv[])
     /* 2회차 - 멤버 변수 파악 */
     while(getline(input, line))
     {
+        std::string compComment = "";
+        extractComment(line, compComment);
+        
         linenum++;
         std::smatch matches;
         if(linenum <= LINES_TO_IGNORE                   ||
