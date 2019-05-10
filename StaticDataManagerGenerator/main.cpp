@@ -61,8 +61,8 @@ std::map<std::string, std::string> keyTypes;                        // GB.Key
 std::map<std::string, std::string> keyNames;
 std::map<std::string, std::deque<std::pair<std::string, std::string>>> members;   //pair<capnpName, cppType>
 std::map<std::string, std::deque<std::pair<std::string, std::string>>> listTypeMembers;   //pair<capnpName, cppType>
-std::map<std::string, std::map<std::string, std::string>> memberComments;   //capnpName -> comment
-std::map<std::string, std::string> structComments;  //cppName -> comment
+std::map<std::string, std::map<std::string, std::vector<std::string>>> memberComments;   //capnpName -> comment
+std::map<std::string, std::vector<std::string>> structComments;  //cppName -> comment
 
 
 /* elem - cppType*/
@@ -140,6 +140,10 @@ void insertBaseTypes()
     convertName_baseTypes["Int32"] = "int32_t";
     convertName_baseTypes["Int16"] = "int16_t";
     convertName_baseTypes["Int8"] = "int8_t";
+    convertName_baseTypes["UInt64"] = "uint64_t";
+    convertName_baseTypes["UInt32"] = "uint32_t";
+    convertName_baseTypes["UInt16"] = "uint16_t";
+    convertName_baseTypes["UInt8"] = "uint8_t";
 	for (const auto& pa : convertName_baseTypes)
 	{
 		baseTypes.insert(pa.second);
@@ -282,9 +286,13 @@ void readElem(std::ifstream& input, std::deque<std::string>& parents, std::strin
         {
             std::string com = matches[1].str();
             if(prevMember.compare("") == 0)
-                structComments[dir] = com;
+            {
+                structComments[dir].push_back(com);
+            }
             else
-                memberComments[dir][prevMember] = com;
+            {
+                memberComments[dir][prevMember].push_back(com);
+            }
         }
         else if(std::regex_match(line, matches, struct_usual))
         {
@@ -557,7 +565,10 @@ bool writeHeader(std::deque<std::string>& structs)
 	for (const auto& className : structs)
 	{
         if(structComments.count(className) != 0)
-            h << "// " + structComments[className] + '\n';
+        {
+            for(const auto& line : structComments[className])
+                h << "// " +  line + '\n';
+        }
         
 		if(className.compare(rootName) != 0)
 			h << "class " + className + "\n";
@@ -586,7 +597,8 @@ bool writeHeader(std::deque<std::string>& structs)
             
             if (memberComments.count(className) != 0 && memberComments[className].count(name) != 0)
             {
-                h << TAB + "// " + memberComments[className][name] + '\n';
+                for(const auto& line : memberComments[className][name])
+                    h << TAB + "// " + line + '\n';
             }
             
             if (isImportedType(memberVar.second))
@@ -628,7 +640,8 @@ bool writeHeader(std::deque<std::string>& structs)
             
             if (memberComments.count(className) != 0 && memberComments[className].count(name) != 0)
             {
-                h << TAB + "// " + memberComments[className][name] + '\n';
+                for(const auto& line : memberComments[className][name])
+                    h << TAB + "// " + line + '\n';
             }
             
             if (isImportedType(type))
