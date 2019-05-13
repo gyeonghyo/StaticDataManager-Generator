@@ -89,6 +89,7 @@ pointerOption myPO = pointerOption::shared;
 
 bool option_macro = true;
 bool option_autoImport = true;
+bool option_eraseUnderScore = true;
 
 //util
 std::string low(std::string orig);
@@ -132,6 +133,15 @@ bool hasKey(std::string cppTypeName)
 	return keyTypes.count(cppTypeName) != 0;
 }
 
+std::string er(std::string s)
+{
+    if(!option_eraseUnderScore)
+        return s;
+    std::string str = s;
+    str.erase(std::remove(str.begin(), str.end(), '_'), str.end());
+    return str;
+}
+
 void insertBaseTypes()
 {
     convertName_baseTypes["Text"] = "std::string";
@@ -170,8 +180,8 @@ void insertSpecialImports()
     SpecialImport_returnType["gb::capnp::gamedata::Price"] = "shop::Price*";
     SpecialImport_pureType["gb::capnp::gamedata::Price"] = "shop::Price";
     SpecialImport_getter["gb::capnp::gamedata::Price"] = "shop::PriceCapnpHelper::makePrice";
-    SpecialImport_header["gb::capnp::shared::ItemData"].insert("gbPriceCapnpHelper.h");
-    SpecialImport_forward["gb::capnp::shared::ItemData"].insert(
+    SpecialImport_header["gb::capnp::gamedata::Price"].insert("gbPriceCapnpHelper.h");
+    SpecialImport_forward["gb::capnp::gamedata::Price"].insert(
     "NS_GB_GAMEDATA_SHOP_BEGIN\n"
     "class Price;\n"
     "NS_GB_GAMEDATA_SHOP_END\n");
@@ -618,9 +628,9 @@ bool writeHeader(std::deque<std::string>& structs)
         }
         
 		if(className.compare(rootName) != 0)
-			h << "class " + className + "\n";
+			h << "class " + er(className) + "\n";
 		else
-			h << "class " + className + "StaticDataManager \n: public StaticDataManager<" + rootName +
+			h << "class " + er(className) + "StaticDataManager \n: public StaticDataManager<" + rootName +
                 "StaticDataManager>\n";
 		h << "{\n";
 
@@ -628,7 +638,7 @@ bool writeHeader(std::deque<std::string>& structs)
 		h << "public:\n";
 		if (className.compare(rootName) != 0)
 		{
-			h << TAB + className + "(const " + getReader(className) + "& capnpReader);\n";
+			h << TAB + er(className) + "(const " + getReader(className) + "& capnpReader);\n";
 		}
 		else
 		{
@@ -656,9 +666,9 @@ bool writeHeader(std::deque<std::string>& structs)
             if (isCppBaseType(type) && option_macro)
             {
                 if(type.compare("std::string") == 0)
-                    h << TAB + "GB_SYNTHESIZE_READONLY_PASS_BY_REF(" + type + ", _" + name + ", " + up(name) + ");\n";
+                    h << TAB + "GB_SYNTHESIZE_READONLY_PASS_BY_REF(" + er(type) + ", _" + name + ", " + up(name) + ");\n";
                 else
-                    h << TAB + "GB_SYNTHESIZE_READONLY(" + type + ", _" + name + ", " + up(name) + ");\n";
+                    h << TAB + "GB_SYNTHESIZE_READONLY(" + er(type) + ", _" + name + ", " + up(name) + ");\n";
                 continue;
             }
             
@@ -676,7 +686,7 @@ bool writeHeader(std::deque<std::string>& structs)
 			else
 			{
 				// const Row* getRowForOrder(const int16_t order) const;
-				h << TAB + "const " + retType + "* get" + up(memberVar.first) +
+				h << TAB + "const " + er(retType) + "* get" + up(memberVar.first) +
 					"() const { return _" + memberVar.first + ".get(); }\n";
 			}
 		}
@@ -700,16 +710,23 @@ bool writeHeader(std::deque<std::string>& structs)
 			{
                 // const std::vector<std::unique_ptr<MysteryMazeFollowerMapInfo>>& getFollowerMapInfos() const { return _followerMapInfos; }
                 
-                if(isCppStructType(type) && option_pointer)
+                if(isCppStructType(type))
                 {
-                    switch (myPO)
+                    if(option_pointer)
                     {
-                    case pointerOption::unique:
-                        pointerType = "std::unique_ptr<" + type + ">";
-                        break;
-                    case pointerOption::shared:
-                        pointerType = "std::shared_ptr<" + type + ">";
-                        break;
+                        switch (myPO)
+                        {
+                        case pointerOption::unique:
+                            pointerType = "std::unique_ptr<" + er(type) + ">";
+                            break;
+                        case pointerOption::shared:
+                            pointerType = "std::shared_ptr<" + er(type) + ">";
+                            break;
+                        }
+                    }
+                    else
+                    {
+                        pointerType = er(type);
                     }
                 }
                 else if(isSpecialImportedType(type))
@@ -729,23 +746,33 @@ bool writeHeader(std::deque<std::string>& structs)
 			{
 				std::string keyType = keyTypes[type];
                 std::string retType = type;
-                if(isCppStructType(type) && option_pointer)
+                if(isCppStructType(type))
                 {
-                    switch (myPO)
+                    if(option_pointer)
                     {
-                        case pointerOption::unique:
-                            pointerType = "std::unique_ptr<" + type + ">";
-                            break;
-                        case pointerOption::shared:
-                            pointerType = "std::shared_ptr<" + type + ">";
-                            break;
+                        switch (myPO)
+                        {
+                            case pointerOption::unique:
+                                pointerType = "std::unique_ptr<" + er(type) + ">";
+                                break;
+                            case pointerOption::shared:
+                                pointerType = "std::shared_ptr<" + er(type) + ">";
+                                break;
+                        }
                     }
+                    else
+                    {
+                        pointerType = er(type);
+                    }
+                    retType = er(type);
                 }
                 else if(isSpecialImportedType(type))
                 {
                     pointerType = SpecialImport_type[type];
                     retType = SpecialImport_pureType[type];
                 }
+                
+                //TODO: retType 가 basic 이면?
                 
 				h << TAB + "const std::map<" + keyType + ", " + pointerType + ">& getAll" + up(name) +
 					"() const { return _" + name + "; }\n";
@@ -783,7 +810,7 @@ bool writeHeader(std::deque<std::string>& structs)
 			if(!isCppStructType(type))
 				h << TAB + saveType + " _" + memberVar.first + ";\n";
 			else
-				h << TAB + "std::unique_ptr<" + type + "> _" + memberVar.first + ";\n";
+				h << TAB + "std::unique_ptr<" + er(type) + "> _" + memberVar.first + ";\n";
 		}
 		// list 타입 멤버 변수
 		for (const auto& memberVar : listTypeMembers[className])
@@ -791,16 +818,23 @@ bool writeHeader(std::deque<std::string>& structs)
             auto name = memberVar.first;
             auto type = memberVar.second;
             std::string pointerType = type;
-            if(isCppStructType(type) && option_pointer)
+            if(isCppStructType(type))
             {
-                switch (myPO)
+                if(option_pointer)
                 {
-                    case pointerOption::unique:
-                        pointerType = "std::unique_ptr<" + type + ">";
-                        break;
-                    case pointerOption::shared:
-                        pointerType = "std::shared_ptr<" + type + ">";
-                        break;
+                    switch (myPO)
+                    {
+                        case pointerOption::unique:
+                            pointerType = "std::unique_ptr<" + er(type) + ">";
+                            break;
+                        case pointerOption::shared:
+                            pointerType = "std::shared_ptr<" + er(type) + ">";
+                            break;
+                    }
+                }
+                else
+                {
+                    pointerType = er(type);
                 }
             }
             
@@ -898,7 +932,7 @@ void writeCpp(std::deque<std::string>& structs)
         else
         {
             // , _followerCardConditions(std::make_unique<CardConditionHelper>(capnpReader.getFollowerCardConditions()))
-            h << TAB + " _" + name + " = std::make_unique<" + type +
+            h << TAB + " _" + name + " = std::make_unique<" + er(type) +
                 ">(capnpReader.get" + up(name) + "());\n";
         }
     }
@@ -911,16 +945,23 @@ void writeCpp(std::deque<std::string>& structs)
             h << WARNING + " ##" << memberVar.second << "##\n";
         }
         std::string pointerType = type;
-        if(isCppStructType(type) && option_pointer)
+        if(isCppStructType(type))
         {
-            switch (myPO)
+            if(option_pointer)
             {
-                case pointerOption::unique:
-                    pointerType = "std::make_unique<" + type + ">";
-                    break;
-                case pointerOption::shared:
-                    pointerType = "std::make_shared<" + type + ">";
-                    break;
+                switch (myPO)
+                {
+                    case pointerOption::unique:
+                        pointerType = "std::make_unique<" + er(type) + ">";
+                        break;
+                    case pointerOption::shared:
+                        pointerType = "std::make_shared<" + er(type) + ">";
+                        break;
+                }
+            }
+            else
+            {
+                pointerType = er(type);
             }
         }
         if(isSpecialImportedType(type))
@@ -962,7 +1003,7 @@ void writeCpp(std::deque<std::string>& structs)
             continue;
         
         std::string starter = ":";
-        h << className + "::" + className + "(const " + getReader(className) + "& capnpReader)\n";
+        h << er(className) + "::" + er(className) + "(const " + getReader(className) + "& capnpReader)\n";
         for (const auto& memberVar : members[className])
         {
             auto name = memberVar.first;
@@ -983,7 +1024,7 @@ void writeCpp(std::deque<std::string>& structs)
             else
             {
                 // , _followerCardConditions(std::make_unique<CardConditionHelper>(capnpReader.getFollowerCardConditions()))
-                h << starter + " _" + name + "(std::make_unique<" + type +
+                h << starter + " _" + name + "(std::make_unique<" + er(type) +
                 ">(capnpReader.get" + up(name) + "()))\n";
             }
             starter = ",";
@@ -1006,16 +1047,16 @@ void writeCpp(std::deque<std::string>& structs)
                     switch (myPO)
                     {
                         case pointerOption::unique:
-                            pointerType = "std::make_unique<" + type + ">";
+                            pointerType = "std::make_unique<" + er(type) + ">";
                             break;
                         case pointerOption::shared:
-                            pointerType = "std::make_shared<" + type + ">";
+                            pointerType = "std::make_shared<" + er(type) + ">";
                             break;
                     }
                 }
                 else
                 {
-                    pointerType = type;
+                    pointerType = er(type);
                 }
             }
             if(isSpecialImportedType(type))
@@ -1052,7 +1093,7 @@ void writeCpp(std::deque<std::string>& structs)
             {
                 std::string keyType = keyTypes[type];
                 std::string returnMethod = "it->second.get()";
-                std::string classNameDisplay = className;
+                std::string classNameDisplay = er(className);
                 if(classNameDisplay.compare(rootName) == 0)
                 {
                     classNameDisplay += "StaticDataManager";
@@ -1068,7 +1109,7 @@ void writeCpp(std::deque<std::string>& structs)
                 //}
                 if (isCppStructType(type))
                 {
-                    h << "const " + type + "* " + classNameDisplay
+                    h << "const " + er(type) + "* " + classNameDisplay
                     + "::get" + up(singular(name)) + "(const " + keyType + " id) const\n" +
                     "{\n" +
                     TAB + "auto it = _" + name + ".find(id);\n" +
@@ -1078,7 +1119,7 @@ void writeCpp(std::deque<std::string>& structs)
                 }
                 else
                 {
-                    h << type + " " + classNameDisplay + "::get" + up(singular(name)) + "(const " + keyType + " id) const\n" +
+                    h << er(type) + " " + classNameDisplay + "::get" + up(singular(name)) + "(const " + keyType + " id) const\n" +
                     "{\n" +
                     TAB + "auto it = _" + name + ".find(id);\n" +
                     TAB + "return it != _" + name + ".end() ? it->second : nullptr;\n" +
@@ -1134,6 +1175,10 @@ int main(int argc, const char * argv[])
         else if(str.compare("-ni") == 0)
         {
             option_autoImport = false;
+        }
+        else if(str.compare("-us") == 0)
+        {
+            option_eraseUnderScore = false;
         }
     }
     
