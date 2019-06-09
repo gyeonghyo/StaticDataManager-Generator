@@ -135,7 +135,7 @@ bool hasKey(std::string cppTypeName)
 
 std::string er(std::string s)
 {
-    if(isBaseType(s))
+    if(isCppBaseType(s))
         return s;
     if(!option_eraseUnderScore)
         return s;
