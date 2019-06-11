@@ -913,8 +913,9 @@ void writeCpp(std::deque<std::string>& structs)
     
     h << "void " + rootName + "StaticDataManager::loadStaticData()\n";
     h << "{\n";
-    h << TAB + "auto capnpReader = CapnpHelper::FileReader<gb::capnp::gamedata::" + rootName +
-        ">(\"" + low(rootName) + ".dxc\").getRoot();\n";
+    h << TAB + "auto fileReader = CapnpHelper::FileReader<gb::capnp::gamedata::" + rootName +
+        ">(\"" + low(rootName) + ".dxc\");\n";
+    h << TAB + "auto capnpReader = fileReader.getRoot();\n";
     for (const auto& memberVar : members[rootName])
     {
         auto name = memberVar.first;
